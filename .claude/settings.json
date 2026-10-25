@@ -1,0 +1,116 @@
+{
+  "ui": {
+    "theme": "system",
+    "model": "claude-sonnet-5-5"
+  },
+  "permissions": {
+    "allow": [
+      "Bash(rtk gain)",
+      "Bash(rtk ls *)",
+      "Bash(rtk discover)",
+      "Bash(rtk proxy)",
+      "Bash(rtk --version)"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "on_tool_use": [
+      {
+        "trigger": {
+          "type": "command",
+          "command": "git.*"
+        },
+        "actions": [
+          {
+            "type": "execute_bash",
+            "command": "rtk git {{command}}"
+          }
+        ]
+      },
+      {
+        "trigger": {
+          "type": "command",
+          "command": "npm.*"
+        },
+        "actions": [
+          {
+            "type": "execute_bash",
+            "command": "rtk npm {{command}}"
+          }
+        ]
+      },
+      {
+        "trigger": {
+          "type": "command",
+          "command": "git.*"
+        },
+        "actions": [
+          {
+            "type": "execute_bash",
+            "command": "rtk git {{command}}"
+          }
+        ]
+      },
+      {
+        "trigger": {
+          "type": "command",
+          "command": "docker.*"
+        },
+        "actions": [
+          {
+            "type": "execute_bash",
+            "command": "rtk docker {{command}}"
+          }
+        ]
+      },
+      {
+        "trigger": {
+          "type": "command",
+          "command": "curl.*"
+        },
+        "actions": [
+          {
+            "type": "execute_bash",
+            "command": "rtk curl {{command}}"
+          }
+        ]
+      },
+      {
+        "trigger": {
+          "type": "command",
+          "command": "wget.*"
+        },
+        "actions": [
+          {
+            "type": "execute_bash",
+            "command": "rtk wget {{command}}"
+          }
+        ]
+      },
+      {
+        "trigger": {
+          "type": "command",
+          "command": "python.*"
+        },
+        "actions": [
+          {
+            "type": "execute_bash",
+            "command": "rtk python {{command}}"
+          }
+        ]
+      },
+      {
+        "trigger": {
+          "type": "command",
+          "command": "bash.*"
+        },
+        "actions": [
+          {
+            "type": "execute_bash",
+            "command": "rtk bash {{command}}"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,173 @@
+import type { ExtractedContent, ReadinessAudit, ReadinessCheck, ReadinessCheck as C } from './types'
+import { READINESS_ENGINE_VERSION } from './types'
+import type { JournalCandidate } from '../types'
+import { getJournalRequirements } from './submissions'
+
+function check(id: string, label: string, status: C['status'], explanation: string, extra?: Partial<C>): ReadinessCheck {
+  return { id, label, status, explanation, ...extra }
+}
+
+const UNKNOWN_JOURNAL_NOTE =
+  'Journal-specific author instructions are not available from open metadata sources, so this item is Unknown — verify on the journal site.'
+
+/** Readiness audit. Only passes what can be verified from the extracted manuscript; journal-side unknowns stay Unknown. */
+export function runReadiness(
+  edited: ExtractedContent,
+  journal: JournalCandidate,
+  auditId: string
+): ReadinessAudit {
+  const checks: ReadinessCheck[] = []
+  const src = journal.homepageUrl
+  const abstractWords = edited.abstract.split(/\s+/).filter(Boolean).length
+
+  checks.push(
+    edited.title.trim().length > 0
+      ? check('title', 'Title present', 'pass', 'A title was extracted and confirmed.', { evidence: edited.title.slice(0, 160) })
+      : check('title', 'Title present', 'attention', 'No title found. Add the manuscript title before submission.')
+  )
+
+  if (abstractWords === 0) {
+    checks.push(check('abstract', 'Abstract present', 'attention', 'No abstract detected — required by nearly all journals.'))
+  } else if (abstractWords < 50) {
+    checks.push(check('abstract', 'Abstract length', 'attention', `Abstract is only ${abstractWords} words — most journals expect 150–300 words. Verify the journal limit.`, { sourceUrl: src }))
+  } else if (abstractWords > 350) {
+    checks.push(check('abstract', 'Abstract length', 'attention', `Abstract is ${abstractWords} words — some journals cap at 250–300. Verify the journal limit.`, { sourceUrl: src }))
+  } else {
+    checks.push(check('abstract', 'Abstract length', 'pass', `Abstract is ${abstractWords} words, within the common 150–350 range. Confirm the exact limit.`, { sourceUrl: src }))
+  }
+
+  checks.push(
+    edited.keywords.length >= 3
+      ? check('keywords', 'Keywords provided', 'pass', `${edited.keywords.length} keywords detected.`, { evidence: edited.keywords.slice(0, 8).join(', ') })
+      : edited.keywords.length > 0
+        ? check('keywords', 'Keywords provided', 'attention', `Only ${edited.keywords.length} keyword(s) found — most journals ask for 4–8.`)
+        : check('keywords', 'Keywords provided', 'attention', 'No keywords detected. Add a keyword list in the manuscript metadata.')
+  )
+
+  const hasIntro = edited.sections.some((s) => s.includes('introduction'))
+  const hasMethods = edited.sections.some((s) => s.includes('method'))
+  const hasResults = edited.sections.some((s) => s.includes('result') || s.includes('finding'))
+  const hasConclusion = edited.sections.some((s) => s.includes('conclusion') || s.includes('discussion'))
+
+  checks.push(
+    hasIntro && hasConclusion
+      ? check('structure', 'Required manuscript sections', 'pass', 'Introduction and conclusion/discussion sections detected.')
+      : check('structure', 'Required manuscript sections', 'attention', 'Not all standard sections (introduction, methods, results, conclusion) were detected. Review structure against the journal guide.', { sourceUrl: src })
+  )
+
+  checks.push(
+    hasMethods
+      ? check('methods', 'Methods section', 'pass', 'A methods section appears present.')
+      : check('methods', 'Methods section', 'unknown', 'No methods section detected — may be labelled differently or missing.')
+  )
+
+  checks.push(
+    edited.referenceCount > 0
+      ? check('references', 'Reference list', 'pass', `Approximately ${edited.referenceCount} references detected. Verify the journal's citation style.`, { sourceUrl: src })
+      : check('references', 'Reference list', 'unknown', 'Reference list could not be counted from the extracted text.')
+  )
+
+  const lower = (edited.objectives + ' ' + edited.methods + ' ' + edited.abstract).toLowerCase()
+  checks.push(
+    /\b(funding|grant|financed by|supported by)\b/.test(lower)
+      ? check('funding', 'Funding statement', 'pass', 'Funding language found in the manuscript.')
+      : check('funding', 'Funding statement', 'attention', 'No funding statement detected — most journals require one (including "no funding received").', { sourceUrl: src })
+  )
+
+  checks.push(
+    /\b(conflict of interest|competing interest|disclosure)\b/.test(lower)
+      ? check('coi', 'Conflict-of-interest declaration', 'pass', 'COI/competing-interest language found.')
+      : check('coi', 'Conflict-of-interest declaration', 'attention', 'No conflict-of-interest declaration detected — usually required.', { sourceUrl: src })
+  )
+
+  checks.push(
+    /\b(ethics (approval|committee)|irb|institutional review|consent)\b/.test(lower)
+      ? check('ethics', 'Ethics / consent statement', 'pass', 'Ethics or consent language found.')
+        : /\b(patients?|participants?|human subjects?|animal models?|surveys?)\b/.test(lower)
+        ? check('ethics', 'Ethics / consent statement', 'warning', 'Human/animal subject language detected without an ethics statement — many journals require approval details.', { sourceUrl: src })
+        : check('ethics', 'Ethics / consent statement', 'unknown', 'No ethics-related language detected; may not apply to this study type.')
+  )
+
+  checks.push(
+    /\b(data availability|data will be shared|data are available|dataset available)\b/.test(lower)
+      ? check('data', 'Data availability statement', 'pass', 'Data availability language found.')
+      : check('data', 'Data availability statement', 'attention', 'No data availability statement detected — increasingly required by journals and funders.', { sourceUrl: src })
+  )
+
+  // Resolve journal-specific requirements where they can be verified
+  const reqs = getJournalRequirements(journal)
+
+  checks.push(
+    check('wordcount', 'Main-text word limit',
+      reqs.wordLimitMainText
+        ? edited.wordCount > reqs.wordLimitMainText
+          ? 'attention'
+          : 'pass'
+        : 'unknown',
+      reqs.wordLimitMainText
+        ? `Manuscript is ${edited.wordCount.toLocaleString()} words. Journal limit: ${reqs.wordLimitMainText.toLocaleString()} words.` +
+          (edited.wordCount > reqs.wordLimitMainText ? ' Exceeds the limit — trim or verify with the journal.' : ' Within the limit.')
+        : `${edited.wordCount.toLocaleString()} words extracted. ${UNKNOWN_JOURNAL_NOTE}`,
+      { sourceUrl: reqs.sourceUrl, evidence: reqs.source }
+    )
+  )
+
+  checks.push(
+    check('figures', 'Figure and table requirements',
+      reqs.acceptsSeparateImageFiles || reqs.acceptsSeparateTableFiles ? 'attention' : 'unknown',
+      reqs.source === 'known'
+        ? `Journal${reqs.acceptsSeparateImageFiles ? ' accepts' : ' does not accept'} separate image files,${reqs.acceptsSeparateTableFiles ? ' accepts' : ' does not accept'} separate table files. Review extraction against these rules.`
+        : UNKNOWN_JOURNAL_NOTE,
+      { sourceUrl: reqs.sourceUrl, evidence: reqs.source }
+    )
+  )
+
+  const refStyleKnown =
+    reqs.referenceStyle && !reqs.referenceStyle.startsWith('Verify')
+  checks.push(
+    check('refstyle', 'Reference style',
+      refStyleKnown ? 'attention' : 'unknown',
+      refStyleKnown
+        ? `Required style: ${reqs.referenceStyle}. Verify references are formatted accordingly.`
+        : UNKNOWN_JOURNAL_NOTE,
+      { sourceUrl: reqs.sourceUrl, evidence: reqs.source }
+    )
+  )
+
+  checks.push(
+    check('files', 'File-format requirements',
+      reqs.source === 'known' && (reqs.figureFormat.length > 0 || reqs.tableFormat.length > 0) ? 'attention' : 'unknown',
+      reqs.source === 'known'
+        ? `Accepted formats — figures: ${reqs.figureFormat.join(', ') || 'verify'}; tables: ${reqs.tableFormat.join(', ') || 'verify'}; supplementary: ${reqs.supplementaryFormat.join(', ') || 'verify'}.`
+        : UNKNOWN_JOURNAL_NOTE,
+      { sourceUrl: reqs.sourceUrl, evidence: reqs.source }
+    )
+  )
+  checks.push(
+    check('apc', 'Publication charges', journal.apcUsd != null ? 'attention' : 'unknown',
+      journal.apcUsd != null
+        ? `Open metadata lists an APC near US$${journal.apcUsd.toLocaleString()} — confirm current fees and any institutional agreement on the journal site.`
+        : UNKNOWN_JOURNAL_NOTE,
+      { sourceUrl: src })
+  )
+  checks.push(
+    check('article-type', 'Article type compatibility', 'unknown',
+      edited.articleType ? `Your article type: ${edited.articleType}. ${UNKNOWN_JOURNAL_NOTE}` : UNKNOWN_JOURNAL_NOTE,
+      { sourceUrl: src })
+  )
+
+  return {
+    id: auditId,
+    journalId: journal.id,
+    journalTitle: journal.title,
+    runAt: new Date().toISOString(),
+    engineVersion: READINESS_ENGINE_VERSION,
+    checks
+  }
+}
+
+export function auditSummary(audit: ReadinessAudit): Record<C['status'], number> {
+  const counts: Record<C['status'], number> = { pass: 0, attention: 0, warning: 0, 'not-checked': 0, unknown: 0 }
+  for (const c of audit.checks) counts[c.status] += 1
+  return counts
+}

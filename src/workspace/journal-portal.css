@@ -1,0 +1,436 @@
+/* Journal Portal specific styles */
+.journal-portal {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: #fff;
+}
+
+.journal-header {
+  background: linear-gradient(135deg, var(--ws-accent), #0046ad);
+  color: white;
+  padding: 2rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2rem;
+  align-items: start;
+}
+
+.journal-branding {
+  display: flex;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.journal-logo {
+  width: 120px;
+  height: 40px;
+  background: white;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.journal-logo img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.journal-info h1 {
+  font-size: 1.8rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem 0;
+  color: white;
+}
+
+.journal-publisher {
+  font-size: 1rem;
+  opacity: 0.9;
+  margin: 0 0 0.5rem 0;
+  color: rgba(255,255,255,0.9);
+}
+
+.journal-description {
+  font-size: 0.95rem;
+  line-height: 1.5;
+  opacity: 0.8;
+  color: rgba(255,255,255,0.9);
+  max-width: 600px;
+}
+
+.journal-meta {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.issn, .oa-badge, .source-badge {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: rgba(255,255,255,0.2);
+  border: 1px solid rgba(255,255,255,0.3);
+}
+
+.oa-badge {
+  background: #fff8e0;
+  color: #7a5c00;
+  border-color: #eadfa8;
+}
+
+.portal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-self: start;
+}
+
+.portal-tabs {
+  display: flex;
+  background: #f7f9fc;
+  border-bottom: 1px solid #e6e6e6;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.tab {
+  padding: 1rem 1.5rem;
+  border: none;
+  background: none;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-bottom: 3px solid transparent;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--ws-accent);
+  background: rgba(32, 80, 129, 0.05);
+}
+
+.tab.active {
+  color: var(--ws-accent);
+  border-bottom-color: var(--ws-accent);
+  background: rgba(32, 80, 129, 0.05);
+}
+
+.tab-content {
+  padding: 2rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+guidelines-section, .requirements-section, .timeline-section, .documents-section, .faqs-section {
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 2rem;
+  margin-bottom: 2rem;
+}
+
+guideline-item {
+  margin-bottom: 1.5rem;
+  padding: 1.5rem;
+  border-radius: 6px;
+  border-left: 4px solid #b3b3b3;
+  background: #f9fafb;
+}
+
+guideline-item.required { border-left-color: #0c8930; }
+guideline-item.recommended { border-left-color: var(--ws-accent); }
+guideline-item.optional { border-left-color: #808080; }
+guideline-item.warning { border-left-color: #b34700; }
+
+guideline-item h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.1rem;
+  color: #0c0f12;
+}
+
+guideline-item p {
+  margin: 0 0 0.5rem 0;
+  line-height: 1.6;
+  color: #333;
+}
+
+.guideline-item a {
+  color: var(--ws-accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.guideline-item a:hover { text-decoration: underline; }
+
+.requirement-category {
+  margin-bottom: 2rem;
+}
+
+.requirement-category h4 {
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin: 0 0 1rem 0;
+  color: var(--ws-accent);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.requirement-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.requirement-item {
+  background: #f9fafb;
+  border: 1px solid #e6e6e6;
+  border-radius: 6px;
+  padding: 1rem;
+  font-size: 0.95rem;
+}
+
+.requirement-item strong { color: #0c0f12; }
+
+.timeline-section {
+  position: relative;
+  padding-left: 2rem;
+}
+
+timeline-item {
+  position: relative;
+  margin-bottom: 2rem;
+}
+
+timeline-item::before {
+  content: '';
+  position: absolute;
+  left: -2rem;
+  top: 0.5rem;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ws-accent);
+  border: 3px solid #fff;
+  z-index: 1;
+}
+
+timeline::after {
+  content: '';
+  position: absolute;
+  left: -1.5rem;
+  top: 0.5rem;
+  bottom: -2rem;
+  width: 2px;
+  background: #cbd5e1;
+}
+
+timeline-phase {
+  display: flex;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.phase-number {
+  width: 30px;
+  height: 30px;
+  background: var(--ws-accent);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.phase-content h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.1rem;
+  color: #0c0f12;
+}
+
+.phase-duration {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ws-accent);
+  margin: 0.25rem 0;
+  display: block;
+}
+
+documents-summary {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #f9fafb;
+  border: 1px solid #e6e6e6;
+  border-radius: 6px;
+}
+
+doc-stats {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+
+.doc-stats span {
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border: 1px solid;
+}
+
+.ready-count { color: #0c8930; border-color: #0c8930; background: #e9f9ee; }
+.missing-count { color: #b34700; border-color: #b34700; background: #fff7ef; }
+.unknown-count { color: #808080; border-color: #b3b3b3; background: #f6f6f6; }
+
+documents-group {
+  margin-bottom: 2rem;
+}
+
+documents-group h4 {
+  font-size: 1.2rem;
+  font-weight: 700;
+  margin: 0 0 1rem 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+document-item {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #e6e6e6;
+  border-radius: 6px;
+  background: #fff;
+  margin-bottom: 0.75rem;
+}
+
+document-item.ready {
+  border-left: 4px solid #0c8930;
+  background: #e9f9ee;
+}
+
+doc-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+doc-status .status-icon {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.ready .doc-status .status-icon { color: #0c8930; }
+
+doc-info {
+  flex: 1;
+}
+
+doc-info h5 {
+  margin: 0 0 0.25rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: #0c0f12;
+}
+
+.required-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #b34700;
+  background: #fff7ef;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  margin-left: 0.5rem;
+}
+
+.portal-footer {
+  background: #f7f9fc;
+  border-top: 1px solid #e6e6e6;
+  padding: 1.5rem 2rem;
+  margin-top: auto;
+}
+
+.portal-info {
+  display: flex;
+  gap: 2rem;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+}
+
+.portal-info p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #666;
+}
+
+.loading-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+  gap: 1rem;
+}
+
+.loading-state .spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid var(--ws-accent);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Responsive adjustments */
+@media (max-width: 900px) {
+  .journal-header {
+    grid-template-columns: 1fr;
+  }
+  .journal-branding {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .portal-tabs {
+    justify-content: center;
+  }
+  .tab {
+    padding: 0.75rem 1rem;
+    font-size: 0.9rem;
+  }
+  .tab-content {
+    padding: 1rem;
+  }
+  guidelines-section, .requirements-section, .timeline-section, .documents-section, .faqs-section {
+    padding: 1rem;
+  }
+  .requirement-grid {
+    grid-template-columns: 1fr;
+  }
+  .doc-stats {
+    justify-content: center;
+  }
+}
