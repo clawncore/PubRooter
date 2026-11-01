@@ -19,7 +19,7 @@ interface CrossrefJournalItem {
 
 /**
  * Candidate discovery in two legs:
- * 1. Journals that published matching papers — Crossref works search by
+ * 1. Journals that published matching papers: Crossref works search by
  *    bibliographic query; each container with an ISSN becomes a candidate.
  * 2. Journals whose names match the manuscript keywords (supplementary).
  * Throws only when nothing could be retrieved at all.
@@ -80,7 +80,10 @@ export async function searchCrossref(title: string, keywords: string[]): Promise
         subjects: item['container-title'] ?? [],
         source: 'crossref',
         sourceUrl: item.URL,
-        homepageUrl: item.URL
+        // Crossref journal URLs are frequently absent or resolver links;
+        // only keep real http(s) sites and let resolveJournalSite recover
+        // the rest by ISSN.
+        homepageUrl: item.URL && /^https?:\/\//i.test(item.URL) && !/openalex\.org/i.test(item.URL) ? item.URL : undefined
       })
     }
   } catch {

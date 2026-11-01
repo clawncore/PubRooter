@@ -1,11 +1,12 @@
 import type { JournalCandidate } from '../types'
 import type { ManuscriptProject, ReadinessAudit } from './types'
+import { journalSiteUrl } from './journal-url'
 
 /**
  * Persistent submission workflow model.
  *
  * A submission attempt is a separate auditable record tied to one manuscript
- * project and one target journal. Attempts are never overwritten — status
+ * project and one target journal. Attempts are never overwritten. Status
  * changes append events to the attempt's own history.
  */
 
@@ -50,6 +51,7 @@ export type SubmissionEventType =
   | 'revision_submitted'
   | 'withdrawn'
   | 'resubmitted'
+  | 'rerouted'
   | 'note_added'
 
 export interface SubmissionEvent {
@@ -80,6 +82,8 @@ export interface JournalRequirements {
   wordLimitAbstract?: number
   wordLimitMainText?: number
   referenceStyle: string
+  /** Accepted formats for the main manuscript file (editable source preferred). */
+  manuscriptFormat: string[]
   figureFormat: string[]
   tableFormat: string[]
   supplementaryFormat: string[]
@@ -105,11 +109,26 @@ export interface JournalRequirements {
   sourceUrl: string
 }
 
+/** Required supporting documents for a journal (shared by readiness + package checks). */
+export function requiredSupportingDocs(reqs: JournalRequirements): Array<{ id: string; label: string }> {
+  const out: Array<{ id: string; label: string }> = []
+  if (reqs.requiresCoverLetter) out.push({ id: 'cover_letter', label: 'Cover letter' })
+  if (reqs.requiresTitlePage) out.push({ id: 'title_page', label: 'Title page' })
+  if (reqs.requiresStructuredAbstract) out.push({ id: 'structured_abstract', label: 'Structured abstract' })
+  if (reqs.requiresDataAvailability) out.push({ id: 'data_availability', label: 'Data availability statement' })
+  if (reqs.requiresEthicsStatement) out.push({ id: 'ethics_statement', label: 'Ethics statement' })
+  if (reqs.requiresConflictOfInterest) out.push({ id: 'coi_statement', label: 'Conflict of interest statement' })
+  if (reqs.requiresFunding) out.push({ id: 'funding_statement', label: 'Funding statement' })
+  if (reqs.requiresORCID) out.push({ id: 'orcid', label: 'ORCID IDs' })
+  return out
+}
+
 /* ---- Built-in registry for common publishers/journals ---- */
 function baseRequirements(journalId: string, title: string, url: string): JournalRequirements {
   return {
     journalId, journalTitle: title,
     referenceStyle: 'Verify on journal site',
+    manuscriptFormat: ['DOC', 'DOCX', 'PDF'],
     figureFormat: [], tableFormat: [], supplementaryFormat: [],
     requiresCoverLetter: true, requiresTitlePage: true,
     requiresStructuredAbstract: false,
@@ -126,6 +145,7 @@ const KNOWN_REQUIREMENTS: Record<string, Partial<JournalRequirements>> = {
   // PLOS journals
   'openalex:W2744378909': {
     referenceStyle: 'Vancouver (numbered), DOI required',
+    manuscriptFormat: ['DOC', 'DOCX', 'ODT', 'PDF', 'LaTeX'],
     figureFormat: ['TIFF', 'EPS', 'PNG', 'JPEG'],
     tableFormat: ['CSV', 'XLSX'],
     supplementaryFormat: ['PDF', 'XLSX', 'DOCX', 'ZIP'],
@@ -145,6 +165,7 @@ const KNOWN_REQUIREMENTS: Record<string, Partial<JournalRequirements>> = {
   // Elsevier (generic)
   'publisher:elsevier': {
     referenceStyle: 'Harvard or journal-specific (verify on site)',
+    manuscriptFormat: ['DOC', 'DOCX', 'PDF'],
     figureFormat: ['TIFF', 'EPS', 'PNG', 'JPEG'],
     tableFormat: ['Word', 'Excel', 'LaTeX'],
     supplementaryFormat: ['PDF', 'XLSX', 'DOCX', 'ZIP', 'MP4', 'AVI'],
@@ -158,6 +179,7 @@ const KNOWN_REQUIREMENTS: Record<string, Partial<JournalRequirements>> = {
   // Springer Nature (generic)
   'publisher:springer': {
     referenceStyle: 'Vancouver (numbered) or journal-specific',
+    manuscriptFormat: ['DOCX', 'PDF'],
     figureFormat: ['EPS', 'TIFF', 'PNG', 'JPEG', 'SVG'],
     tableFormat: ['Word', 'Excel'],
     supplementaryFormat: ['PDF', 'XLSX', 'DOCX', 'ZIP'],
@@ -172,6 +194,7 @@ const KNOWN_REQUIREMENTS: Record<string, Partial<JournalRequirements>> = {
   // IEEE
   'publisher:ieee': {
     referenceStyle: 'IEEE (numbered)',
+    manuscriptFormat: ['PDF', 'LaTeX', 'DOCX'],
     figureFormat: ['EPS', 'TIFF', 'PNG', 'JPEG', 'PDF'],
     tableFormat: ['Word', 'Excel', 'LaTeX'],
     supplementaryFormat: ['PDF', 'ZIP', 'MP4'],
@@ -185,6 +208,7 @@ const KNOWN_REQUIREMENTS: Record<string, Partial<JournalRequirements>> = {
   // Wiley
   'publisher:wiley': {
     referenceStyle: 'APA (author-year) or journal-specific',
+    manuscriptFormat: ['DOC', 'DOCX', 'PDF'],
     figureFormat: ['TIFF', 'EPS', 'PNG', 'JPEG'],
     tableFormat: ['Word', 'Excel', 'LaTeX'],
     supplementaryFormat: ['PDF', 'XLSX', 'DOCX', 'ZIP', 'MP4'],
@@ -206,7 +230,7 @@ export function getJournalRequirements(journal: JournalCandidate): JournalRequir
   const base = baseRequirements(
     journal.id,
     journal.title,
-    journal.homepageUrl ?? 'https://example.com/journal-homepage'
+    journalSiteUrl(journal) ?? ''
   )
 
   // 1. Exact journal match in registry
@@ -224,7 +248,7 @@ export function getJournalRequirements(journal: JournalCandidate): JournalRequir
     return { ...base, journalId: journal.id, journalTitle: journal.title, ...pubMatch } as JournalRequirements
   }
 
-  // 3. Fallback — homepage, generic requirements
+  // 3. Fallback. Homepage, generic requirements
   return {
     ...base,
     referenceStyle: 'Verify author instructions on the journal homepage',
@@ -279,6 +303,10 @@ export interface SubmissionAttempt {
   readinessAuditId?: string | null
   decision?: Decision
   revision?: Revision
+  /** When this attempt was rerouted from an earlier attempt on the same
+   *  manuscript, the previous attempt it continues from. */
+  reroutedFromAttemptId?: string | null
+  reroutedFromJournalTitle?: string | null
   createdAt: string
   updatedAt: string
   events: SubmissionEvent[]
@@ -309,6 +337,39 @@ export const SUBMISSION_STATUS_CLASS: Record<SubmissionStatus, string> = {
   withdrawn: 'withdrawn'
 }
 
+/** Human labels for event history entries. */
+export const EVENT_LABEL: Record<SubmissionEventType, string> = {
+  created: 'Created',
+  status: 'Status updated',
+  submission_recorded: 'Submission recorded',
+  decision: 'Decision recorded',
+  revision_requested: 'Revision requested',
+  revision_submitted: 'Revision submitted',
+  withdrawn: 'Withdrawn',
+  resubmitted: 'Resubmitted',
+  rerouted: 'Rerouted',
+  note_added: 'Note added'
+}
+
+/** Statuses reachable from each status. Terminal statuses (rejected,
+ *  published, withdrawn) have no successors: a rejected attempt is continued
+ *  by rerouting to a new journal, never by mutating its outcome. */
+const TRANSITIONS: Record<SubmissionStatus, SubmissionStatus[]> = {
+  draft: ['submitted', 'rejected', 'withdrawn'],
+  submitted: ['under_review', 'revision_requested', 'accepted', 'rejected', 'withdrawn'],
+  under_review: ['revision_requested', 'accepted', 'rejected', 'withdrawn'],
+  revision_requested: ['revision_submitted', 'accepted', 'rejected', 'withdrawn'],
+  revision_submitted: ['under_review', 'accepted', 'rejected', 'withdrawn'],
+  accepted: ['published'],
+  rejected: [],
+  published: [],
+  withdrawn: []
+}
+
+export function allowedTransitions(status: SubmissionStatus): SubmissionStatus[] {
+  return TRANSITIONS[status] ?? []
+}
+
 export interface SubmissionContext {
   hasAnalysis: boolean
   hasTarget: boolean
@@ -322,7 +383,7 @@ function stageId(id: string) {
 
 /**
  * Map an attempt onto the 16-stage publication pipeline. The stage reflects
- * real persisted state (analysis → target → readiness → package → submit) —
+ * real persisted state (analysis → target → readiness → package → submit).
  * never the passage of time and never an inferred editorial outcome.
  */
 export function stageForAttempt(attempt: SubmissionAttempt, ctx: SubmissionContext): number {
@@ -386,21 +447,21 @@ export function nextActionFor(attempt: SubmissionAttempt, ctx: SubmissionContext
       return { stage, action, detail }
     }
     case 'submitted':
-      return { stage: stageForAttempt(attempt, ctx), action: 'Await editorial decision', detail: 'PubRooter did not submit anywhere — record the portal outcome when the researcher confirms it.' }
+      return { stage: stageForAttempt(attempt, ctx), action: 'Await editorial decision', detail: 'PubRooter did not submit anywhere. Record the portal outcome when the researcher confirms it.' }
     case 'under_review':
       return { stage: stageForAttempt(attempt, ctx), action: 'Await decision or revision', detail: 'Track reviewer/editor communications in the attempt history.' }
     case 'revision_requested':
       return { stage: stageForAttempt(attempt, ctx), action: 'Respond to revision request', detail: 'Record the decision date, gather reviewer comments, and prepare responses.' }
     case 'revision_submitted':
-      return { stage: stageForAttempt(attempt, ctx), action: 'Await next editorial decision', detail: 'A revised package was recorded — wait for the editor’s next move.' }
+      return { stage: stageForAttempt(attempt, ctx), action: 'Await next editorial decision', detail: 'A revised package was recorded. Wait for the editor’s next move.' }
     case 'accepted':
       return { stage: stageForAttempt(attempt, ctx), action: 'Record acceptance and proceed to publication steps', detail: 'Retain full attempt history; confirm final author actions.' }
     case 'rejected':
       return { stage: stageForAttempt(attempt, ctx), action: 'Choose a new target journal or withdraw', detail: 'Start a new attempt for a different journal; keep this attempt for decision history.' }
     case 'published':
-      return { stage: stageForAttempt(attempt, ctx), action: 'Archive and retain history', detail: 'Published — retain the attempt record and exports.' }
+      return { stage: stageForAttempt(attempt, ctx), action: 'Archive and retain history', detail: 'Published. Retain the attempt record and exports.' }
     case 'withdrawn':
-      return { stage: stageForAttempt(attempt, ctx), action: 'Closed — no further action', detail: 'Attempt withdrawn; history is retained.' }
+      return { stage: stageForAttempt(attempt, ctx), action: 'Closed. No further action', detail: 'Attempt withdrawn; history is retained.' }
   }
 }
 
@@ -408,7 +469,7 @@ export function contextFromProject(project: ManuscriptProject): SubmissionContex
   const hasAnalysis = Boolean(project.analysis && project.analysis.matches.length > 0)
   const hasTarget = Boolean(project.selectedJournalId)
   const hasReadiness = project.audits.length > 0
-  // A package can only be said to be ready when every checkable item passes —
+  // A package can only be said to be ready when every checkable item passes.
   // unknowns are surfaced as unknown, never passed.
   const latest = project.audits[0]
   let hasPackage = false
@@ -446,7 +507,7 @@ export function buildRequiredDocs(project: ManuscriptProject, journal: JournalCa
     status: 'unknown',
     note: reqs.source === 'known'
       ? `Journal guidelines: cover letter required.`
-      : `Verify on journal site — cover letter requirement not confirmed in open metadata.`
+      : `Verify on journal site. Cover letter requirement not confirmed in open metadata.`
   })
 
   docs.push({
@@ -456,7 +517,7 @@ export function buildRequiredDocs(project: ManuscriptProject, journal: JournalCa
     status: 'unknown',
     note: reqs.source === 'known'
       ? `Journal guidelines: title page with declarations required.`
-      : `Verify on journal site — author declaration requirements may include COI, funding, ethics statements.`
+      : `Verify on journal site. Author declaration requirements may include COI, funding, ethics statements.`
   })
 
   if (reqs.requiresStructuredAbstract) {
@@ -467,7 +528,7 @@ export function buildRequiredDocs(project: ManuscriptProject, journal: JournalCa
       status: 'unknown',
       note: reqs.source === 'known'
         ? `Journal requires a structured abstract with section headings.`
-        : `Verify on journal site — structured abstract format required.`
+        : `Verify on journal site. Structured abstract format required.`
     })
   }
 
@@ -479,7 +540,7 @@ export function buildRequiredDocs(project: ManuscriptProject, journal: JournalCa
       status: 'unknown',
       note: reqs.source === 'known'
         ? `Journal requires a data availability statement.`
-        : `Verify on journal site — data sharing statement required.`
+        : `Verify on journal site. Data sharing statement required.`
     })
   }
 
@@ -491,7 +552,7 @@ export function buildRequiredDocs(project: ManuscriptProject, journal: JournalCa
       status: 'unknown',
       note: reqs.source === 'known'
         ? `Journal requires an ethics statement.`
-        : `Verify on journal site — ethics/IRB statement may be required.`
+        : `Verify on journal site. Ethics/IRB statement may be required.`
     })
   }
 
@@ -503,7 +564,7 @@ export function buildRequiredDocs(project: ManuscriptProject, journal: JournalCa
       status: 'unknown',
       note: reqs.source === 'known'
         ? `Journal requires a conflict-of-interest disclosure.`
-        : `Verify on journal site — COI disclosure may be required.`
+        : `Verify on journal site: COI disclosure may be required.`
     })
   }
 
@@ -515,7 +576,7 @@ export function buildRequiredDocs(project: ManuscriptProject, journal: JournalCa
       status: 'unknown',
       note: reqs.source === 'known'
         ? `Journal requires a funding statement.`
-        : `Verify on journal site — funding/grant information may be required.`
+        : `Verify on journal site. Funding/grant information may be required.`
     })
   }
 
@@ -527,7 +588,7 @@ export function buildRequiredDocs(project: ManuscriptProject, journal: JournalCa
       status: 'unknown',
       note: reqs.source === 'known'
         ? `Journal requires ORCID iDs for all authors.`
-        : `Verify on journal site — ORCID may be required.`
+        : `Verify on journal site: ORCID may be required.`
     })
   }
 
@@ -568,6 +629,9 @@ export function transitionAttempt(attempt: SubmissionAttempt, next: SubmissionSt
   }
   const ev = makeEvent(typeMap[next] ?? 'status', note, next)
   const nextAttempt: SubmissionAttempt = { ...attempt, status: next, updatedAt: at ?? ev.at, events: [...attempt.events, ev] }
+  if (next === 'submitted' && !nextAttempt.submissionDate) {
+    nextAttempt.submissionDate = at ?? ev.at
+  }
   if ((next === 'accepted' || next === 'rejected') && attempt.decision) {
     nextAttempt.decision = { ...attempt.decision, status: next, date: ev.at, notes: note ?? attempt.decision.notes }
   }
@@ -595,4 +659,100 @@ export function createDraftAttempt(project: ManuscriptProject, journal: JournalC
     events: [makeEvent('created', `Submission attempt ${attemptNumber} started against ${journal.title}.`, 'draft')]
   }
   return attempt
+}
+
+/** A rerouted attempt continues the same manuscript against a new journal.
+ *  The previous attempt is never touched — the link and the reason live on
+ *  the new attempt, so both histories stay intact and auditable. */
+export function createRerouteAttempt(
+  project: ManuscriptProject,
+  journal: JournalCandidate,
+  attemptNumber: number,
+  previous: SubmissionAttempt,
+  note?: string
+): SubmissionAttempt {
+  const now = new Date().toISOString()
+  const reason = note?.trim()
+    ? ` ${note.trim()}`
+    : ''
+  return {
+    id: `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    projectId: project.id,
+    attemptNumber,
+    status: 'draft',
+    targetJournalId: journal.id,
+    targetJournalTitle: journal.title,
+    requiredDocs: buildRequiredDocs(project, journal, project.audits[0]),
+    reroutedFromAttemptId: previous.id,
+    reroutedFromJournalTitle: previous.targetJournalTitle,
+    createdAt: now,
+    updatedAt: now,
+    events: [
+      makeEvent(
+        'rerouted',
+        `Rerouted from ${previous.targetJournalTitle} (attempt #${previous.attemptNumber}, ${SUBMISSION_STATUS_LABEL[previous.status]}). New target: ${journal.title}.${reason}`,
+        'draft'
+      )
+    ]
+  }
+}
+
+export interface PostSubmissionStats {
+  manuscripts: number
+  attempts: number
+  draft: number
+  submitted: number
+  inReview: number
+  revisionRequested: number
+  decided: number
+  accepted: number
+  rejected: number
+  published: number
+  withdrawn: number
+  reroutes: number
+  /** accepted + published ÷ decided, or null when nothing has been decided. */
+  acceptanceRate: number | null
+}
+
+/** Aggregate post-submission outcomes across every manuscript project.
+ *  Counts only persisted attempt state — no elapsed time, no inferred
+ *  editorial outcomes. */
+export function postSubmissionStats(projects: ManuscriptProject[]): PostSubmissionStats {
+  const stats: PostSubmissionStats = {
+    manuscripts: projects.length,
+    attempts: 0,
+    draft: 0,
+    submitted: 0,
+    inReview: 0,
+    revisionRequested: 0,
+    decided: 0,
+    accepted: 0,
+    rejected: 0,
+    published: 0,
+    withdrawn: 0,
+    reroutes: 0,
+    acceptanceRate: null
+  }
+  for (const p of projects) {
+    for (const a of p.submissions ?? []) {
+      stats.attempts++
+      if (a.reroutedFromAttemptId) stats.reroutes++
+      switch (a.status) {
+        case 'draft': stats.draft++; break
+        case 'submitted': stats.submitted++; break
+        case 'under_review': stats.inReview++; break
+        case 'revision_requested':
+        case 'revision_submitted':
+          stats.inReview++
+          stats.revisionRequested++
+          break
+        case 'accepted': stats.accepted++; stats.decided++; break
+        case 'rejected': stats.rejected++; stats.decided++; break
+        case 'published': stats.published++; stats.accepted++; stats.decided++; break
+        case 'withdrawn': stats.withdrawn++; break
+      }
+    }
+  }
+  if (stats.decided > 0) stats.acceptanceRate = Math.round((stats.accepted / stats.decided) * 100)
+  return stats
 }

@@ -1,5 +1,6 @@
 import type { JournalCandidate, JournalMatch } from '../types'
 import { rankJournals } from '../lib/matching'
+import { matchCacheKey, readMatchCache, writeMatchCache } from '../lib/match-cache'
 import { searchOpenAlex } from '../api/openalex'
 import { searchCrossref } from '../api/crossref'
 import type { ExtractedContent, ManuscriptProject, ResearchPreferences } from './types'
@@ -28,21 +29,37 @@ export async function runAnalysis(project: ManuscriptProject, prefs: ResearchPre
 
   onProgress('matching', 'Querying OpenAlex and Crossref')
   const manuscript = toManuscript(edited, project.id)
-  const results: JournalCandidate[] = []
   const notices: string[] = []
+  const cacheKey = matchCacheKey(edited.title, edited.abstract, edited.keywords)
+  let ranked: JournalMatch[]
+  let candidateCount = 0
 
-  const [oaRes, crRes] = await Promise.allSettled([
-    searchOpenAlex(manuscript.title, manuscript.keywords.length ? manuscript.keywords : [manuscript.title]),
-    searchCrossref(manuscript.title, manuscript.keywords.length ? manuscript.keywords : [manuscript.title])
-  ])
-  if (oaRes.status === 'fulfilled') results.push(...oaRes.value)
-  else notices.push('OpenAlex unreachable — candidate set may be partial.')
-  if (crRes.status === 'fulfilled') results.push(...crRes.value)
-  else notices.push('Crossref unreachable — candidate set may be partial.')
-  if (results.length === 0) notices.push('No candidates returned from live sources. Check connectivity and retry.')
+  const cached = readMatchCache(cacheKey)
+  if (cached) {
+    ranked = cached.matches
+    candidateCount = cached.candidateCount
+    notices.push(...cached.notices)
+    onProgress('generating', 'Reusing results cached for this manuscript')
+  } else {
+    const results: JournalCandidate[] = []
+    const [oaRes, crRes] = await Promise.allSettled([
+      searchOpenAlex(manuscript.title, manuscript.keywords.length ? manuscript.keywords : [manuscript.title]),
+      searchCrossref(manuscript.title, manuscript.keywords.length ? manuscript.keywords : [manuscript.title])
+    ])
+    if (oaRes.status === 'fulfilled') results.push(...oaRes.value)
+    else notices.push('OpenAlex unreachable. Candidate set may be partial.')
+    if (crRes.status === 'fulfilled') results.push(...crRes.value)
+    else notices.push('Crossref unreachable. Candidate set may be partial.')
+    if (results.length === 0) notices.push('No candidates returned from live sources. Check connectivity and retry.')
 
-  onProgress('generating', 'Ranking candidates and assigning fit tiers')
-  const ranked = rankJournals(manuscript, results)
+    onProgress('generating', 'Ranking candidates and assigning fit tiers')
+    ranked = rankJournals(manuscript, results)
+    candidateCount = results.length
+    // Only cache complete runs: partial (failed-leg) results must be refetched.
+    if (oaRes.status === 'fulfilled' && crRes.status === 'fulfilled' && ranked.length > 0) {
+      writeMatchCache(cacheKey, { matches: ranked, notices: [...notices], candidateCount })
+    }
+  }
   const { tiers, excluded } = assignTiers(ranked, prefs)
   for (const ex of excluded) notices.push(`Excluded from tiers: ${ex.reason}`)
 
@@ -51,8 +68,8 @@ export async function runAnalysis(project: ManuscriptProject, prefs: ResearchPre
     matches: ranked,
     tiers,
     notices: [...new Set(notices)].slice(0, 12),
-    engineVersion: 'pubrooter-rank-v1',
-    candidateCount: results.length
+    engineVersion: 'pubrooter-rank-v3',
+    candidateCount
   }
 
   const defaultJournal = ranked.find((m) => tiers.tier1.includes(m.journal.id)) ?? ranked[0]

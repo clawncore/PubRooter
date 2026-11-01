@@ -72,6 +72,36 @@ function storagePath(userId: string, id: string): string {
   return `${userId}/${id}.pdf`
 }
 
+/** Real name/type of a cloud-stored file. The storage path always ends in
+ *  `.pdf` (legacy), so without this metadata every download would claim to
+ *  be a PDF and previews would feed DOCX bytes to the PDF viewer. */
+const META_PREFIX = 'pubrooter.filemeta.'
+
+interface FileMeta {
+  name: string
+  type: string
+}
+
+function writeMeta(id: string, file: File): void {
+  try {
+    localStorage.setItem(META_PREFIX + id, JSON.stringify({ name: file.name, type: file.type || 'application/octet-stream' }))
+  } catch {
+    /* storage full or unavailable — previews fall back to legacy naming */
+  }
+}
+
+function readMeta(id: string): FileMeta | null {
+  try {
+    const raw = localStorage.getItem(META_PREFIX + id)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as FileMeta
+    if (!parsed?.name) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
 export async function storeFile(id: string, file: File): Promise<void> {
   if (!isCloud || !supabase) return localStore(id, file)
   const { data: userData } = await supabase.auth.getUser()
@@ -83,6 +113,7 @@ export async function storeFile(id: string, file: File): Promise<void> {
     upsert: true
   })
   if (error) throw new Error(`Could not store manuscript: ${error.message}`)
+  writeMeta(id, file)
 }
 
 export async function getFile(id: string): Promise<File | null> {
@@ -93,7 +124,10 @@ export async function getFile(id: string): Promise<File | null> {
   const path = storagePath(uid, id)
   const { data, error } = await supabase.storage.from(BUCKET).download(path)
   if (error || !data) return null
-  return new File([data], `${id}.pdf`, { type: 'application/pdf' })
+  const meta = readMeta(id)
+  const type = meta?.type || data.type || 'application/pdf'
+  const name = meta?.name || `${id}.pdf`
+  return new File([data], name, { type })
 }
 
 export async function deleteFile(id: string): Promise<void> {

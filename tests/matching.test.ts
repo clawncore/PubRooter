@@ -67,11 +67,12 @@ describe('rankJournals', () => {
 
   it('sorts by score descending', () => {
     const list = rankJournals(manuscript, [
-      candidate({ id: 'weak', title: 'Journal of Pottery', subjects: ['pottery'] }),
+      candidate({ id: 'weak', title: 'Journal of Neural Pottery', subjects: ['pottery'] }),
       candidate({ id: 'strong' })
     ])
+    expect(list).toHaveLength(2)
     expect(list[0]!.journal.id).toBe('strong')
-    expect(list[0]!.score).toBeGreaterThanOrEqual(list[1]!.score)
+    expect(list[0]!.score).toBeGreaterThan(list[1]!.score)
   })
 
   it('caps the candidate list', () => {
@@ -81,5 +82,52 @@ describe('rankJournals', () => {
 
   it('handles an empty candidate set without throwing', () => {
     expect(rankJournals(manuscript, [])).toEqual([])
+  })
+})
+
+describe('determinism', () => {
+  function pool(): JournalCandidate[] {
+    const subjects = ['deep learning', 'molecular modelling', 'drug discovery']
+    const base: JournalCandidate[] = [
+      candidate({ id: 'oa-1', issn: '1111-1111', title: 'Journal of Molecular Learning', subjects }),
+      candidate({ id: 'oa-2', issn: '2222-2222', title: 'Neural Systems Review', subjects: ['deep learning', 'neural networks'] }),
+      candidate({ id: 'cr-3', issn: '3333-3333', title: 'Drug Discovery Advances', subjects: ['drug discovery'], source: 'crossref', worksCount: undefined, isOpenAccess: undefined }),
+      candidate({ id: 'oa-4', issn: '4444-4444', title: 'Molecular Property Journal', subjects: ['molecular property', 'cheminformatics'] }),
+      candidate({ id: 'cr-5', issn: '5555-5555', title: 'Graph Learning Letters', subjects: ['graph neural networks', 'deep learning'], source: 'crossref', worksCount: undefined, isOpenAccess: undefined })
+    ]
+    return base
+  }
+
+  const ids = (list: ReturnType<typeof rankJournals>) => list.map((m) => m.journal.id)
+
+  it('returns the same ranking for shuffled inputs', () => {
+    const base = pool()
+    const expected = ids(rankJournals(manuscript, base))
+    expect(expected.length).toBeGreaterThan(1)
+    expect(ids(rankJournals(manuscript, [...base].reverse()))).toEqual(expected)
+    expect(ids(rankJournals(manuscript, [...base.slice(2), ...base.slice(0, 2)]))).toEqual(expected)
+    const permuted = [base[3]!, base[0]!, base[4]!, base[2]!, base[1]!]
+    expect(ids(rankJournals(manuscript, permuted))).toEqual(expected)
+  })
+
+  it('breaks score ties deterministically by quality then name', () => {
+    const t1 = candidate({ id: 'z-journal', issn: '7777-7777', title: 'AAA Molecular Journal' })
+    const t2 = candidate({ id: 'a-journal', issn: '8888-8888', title: 'ZZZ Molecular Journal' })
+    const fwd = rankJournals(manuscript, [t1, t2])
+    const rev = rankJournals(manuscript, [t2, t1])
+    expect(fwd).toHaveLength(2)
+    expect(fwd[0]!.score).toBe(fwd[1]!.score)
+    expect(fwd[0]!.journal.title).toBe('AAA Molecular Journal')
+    expect(ids(rev)).toEqual(ids(fwd))
+  })
+
+  it('picks the richer duplicate record regardless of arrival order', () => {
+    const bare = candidate({ id: 'x1', issn: '9999-9999', subjects: [], source: 'crossref', worksCount: undefined, isOpenAccess: undefined })
+    const rich = candidate({ id: 'x2', issn: '9999-9999' })
+    const fwd = rankJournals(manuscript, [bare, rich])
+    const rev = rankJournals(manuscript, [rich, bare])
+    expect(fwd).toHaveLength(1)
+    expect(fwd[0]!.journal.id).toBe('x2')
+    expect(rev[0]!.journal.id).toBe('x2')
   })
 })

@@ -56,26 +56,26 @@ export function PrivacyPolicy({ onBack, onTerms }: Props) {
           <h3>2.1 Information you provide</h3>
           <ul>
             <li>
-              <strong>Manuscript content</strong> — titles, abstracts, and keywords you enter for journal discovery.
+              <strong>Manuscript content</strong>. Titles, abstracts, and keywords you enter for journal discovery.
               In the default local mode, this data remains in your browser’s local storage and is never transmitted
               to PubRooter servers.
             </li>
             <li>
-              <strong>Account information</strong> — if you later create an account (optional, roadmap), your email
+              <strong>Account information</strong> - if you later create an account (optional, roadmap), your email
               and organisation details.
             </li>
             <li>
-              <strong>Support messages</strong> — if you contact us, the content of your message and contact details.
+              <strong>Support messages</strong> - if you contact us, the content of your message and contact details.
             </li>
           </ul>
           <h3>2.2 Information collected automatically</h3>
           <ul>
             <li>
-              <strong>Technical logs</strong> — standard server logs (IP address, browser type, pages visited,
+              <strong>Technical logs</strong> - standard server logs (IP address, browser type, pages visited,
               timestamps) used for security and reliability.
             </li>
             <li>
-              <strong>Cookies</strong> — we use only essential cookies required for the Service to function. We do
+              <strong>Cookies</strong> - we use only essential cookies required for the Service to function. We do
               not use advertising or cross-site tracking cookies.
             </li>
           </ul>

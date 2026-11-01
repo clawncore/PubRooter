@@ -3,7 +3,7 @@ import { useWorkspace } from '../../workspace/WorkspaceContext'
 import { auditSummary } from '../../workspace/readiness'
 import { sortRows, flattenAudits, targetJournalTitle, type AuditRow, type SortDir } from '../../workspace/dashboard'
 import { readinessCsv, downloadFile } from '../../workspace/reports'
-import type { ReadinessAudit, SavedJournalRecord } from '../../workspace/types'
+import type { ReadinessAudit } from '../../workspace/types'
 import type { WorkspaceView } from './WorkspaceApp'
 
 const fmt = (iso: string) => new Date(iso).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
@@ -63,13 +63,20 @@ function tally(audit: ReadinessAudit): ReactNode[] {
 
 type MsKey = 'name' | 'created' | 'updated' | 'status' | 'matches' | 'readiness' | 'journal'
 type RdKey = 'manuscript' | 'journal' | 'runAt' | 'pass' | 'attention' | 'warning' | 'unknown'
-type SjKey = 'title' | 'publisher' | 'issn' | 'score' | 'savedAt'
 
-export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; openFinder: () => void }) {
+export function Overview({
+  go,
+  openFinder,
+  openPortal
+}: {
+  go: (v: WorkspaceView) => void
+  openFinder: () => void
+  openPortal: (projectId: string, journalId?: string) => void
+}) {
   const { data, log } = useWorkspace()
   const [ms, toggleMs] = useSort<MsKey>('updated')
   const [rd, toggleRd] = useSort<RdKey>('runAt')
-  const [sj, toggleSj] = useSort<SjKey>('savedAt')
+  const [rdLimit, setRdLimit] = useState(6)
 
   if (!data) return null
 
@@ -77,7 +84,6 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
   const completed = projects.filter((p) => p.status === 'completed')
   const recommendationCount = completed.reduce((n, p) => n + (p.analysis?.matches.length ?? 0), 0)
   const attention = projects.filter((p) => p.status === 'failed' || p.status === 'reviewing')
-  const savedCount = data.savedJournals.length
   const attemptCount = projects.reduce((n, p) => n + p.submissions.length, 0)
   const awaitingAttempt = completed.filter((p) => p.selectedJournalId != null && p.submissions.length === 0)
 
@@ -90,18 +96,18 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
     nextActions.push({ text: 'Finish reviewing extracted manuscript details before analysis.', run: () => go({ name: 'manuscripts' }) })
   }
   if (projects.some((p) => p.status === 'failed')) {
-    nextActions.push({ text: 'Retry analyses that failed — provider errors are safe to retry.', run: () => go({ name: 'manuscripts' }) })
+    nextActions.push({ text: 'Retry analyses that failed. Provider errors are safe to retry.', run: () => go({ name: 'manuscripts' }) })
   }
   if (completed.some((p) => p.audits.length === 0)) {
     nextActions.push({ text: 'Run a journal-specific readiness check on an analysed manuscript.', run: () => go({ name: 'readiness' }) })
   }
-  if (savedCount > 0 && completed.length > 0 && completed.every((p) => p.selectedJournalId == null)) {
-    nextActions.push({ text: 'Select a target journal from your recommendations.', run: () => go({ name: 'manuscripts' }) })
+  if (completed.length > 0 && completed.every((p) => p.selectedJournalId == null)) {
+    nextActions.push({ text: 'Run readiness checks to choose a target journal.', run: () => go({ name: 'readiness' }) })
   }
   if (awaitingAttempt.length > 0) {
     nextActions.push({
       text: `Prepare a submission for ${awaitingAttempt.length} analysed manuscript${awaitingAttempt.length === 1 ? '' : 's'} with a target journal selected.`,
-      run: () => go({ name: 'submission-prep', id: awaitingAttempt[0].id })
+      run: () => openPortal(awaitingAttempt[0].id, awaitingAttempt[0].selectedJournalId ?? undefined)
     })
   }
   if (projects.length === 0) {
@@ -109,7 +115,7 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
     nextActions.push({ text: 'Or search journals directly with the public Journal Finder.', run: openFinder })
   }
 
-  const emptyWorkspace = projects.length === 0 && savedCount === 0 && totalAudits === 0
+  const emptyWorkspace = projects.length === 0 && totalAudits === 0
 
   const msAcc: Record<MsKey, (p: (typeof projects)[number]) => number | string> = {
     name: (p) => p.name,
@@ -133,15 +139,6 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
   }
   const rdRows = sortRows(auditRows, rd.key, rd.dir, rdAcc)
 
-  const sjAcc: Record<SjKey, (s: SavedJournalRecord) => number | string> = {
-    title: (s) => s.title,
-    publisher: (s) => s.publisher ?? '',
-    issn: (s) => s.issn ?? '',
-    score: (s) => s.score ?? -1,
-    savedAt: (s) => Date.parse(s.savedAt)
-  }
-  const sjRows = sortRows(data.savedJournals, sj.key, sj.dir, sjAcc)
-
   const rdTotals = rdRows.reduce(
     (t, r) => {
       const s = auditSummary(r.audit)
@@ -160,8 +157,8 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
         <div>
           <h1 className="ws-h1">Welcome back{data.profile.name ? `, ${data.profile.name.split(' ')[0]}` : ''}</h1>
           <p className="ws-sub">
-            Your publication desk: manuscripts, evidence-backed journal matches, readiness checks, and saved venues.
-            Every figure on this page is computed from your own workspace records.
+            Your publication desk: manuscripts, evidence-backed journal matches, readiness checks, and submission
+            tracking. Every figure on this page is computed from your own workspace records.
           </p>
         </div>
         <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
@@ -169,12 +166,12 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
             Analyze a Manuscript
           </button>
           <button type="button" className="ws-btn ws-btn-outline" onClick={openFinder}>
-            Find journals ↗
+            Find journals
           </button>
         </div>
       </div>
 
-      <div className="ws-metrics ws-metrics-7">
+      <div className="ws-metrics ws-metrics-6">
         <button type="button" className="ws-metric ws-metric-btn" onClick={() => go({ name: 'manuscripts' })}>
           <span className="ws-metric-value">{projects.length}</span>
           <span className="ws-metric-label">Manuscripts</span>
@@ -186,10 +183,6 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
         <button type="button" className="ws-metric ws-metric-btn violet" onClick={() => go({ name: 'manuscripts' })}>
           <span className="ws-metric-value">{recommendationCount}</span>
           <span className="ws-metric-label">Journal matches</span>
-        </button>
-        <button type="button" className="ws-metric ws-metric-btn teal" onClick={() => go({ name: 'saved' })}>
-          <span className="ws-metric-value">{savedCount}</span>
-          <span className="ws-metric-label">Saved journals</span>
         </button>
         <button type="button" className="ws-metric ws-metric-btn gold" onClick={() => go({ name: 'readiness' })}>
           <span className="ws-metric-value">{totalAudits}</span>
@@ -209,13 +202,13 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
         <div className="ws-card ws-empty" style={{ marginTop: '1.5rem' }}>
           <strong>Your workspace is empty</strong>
           Upload a PDF and PubRooter will extract its details, match it against live indexes, and produce tiered,
-          explained recommendations — no estimated figures, only evidence you can open.
+          explained recommendations. No estimated figures, only evidence you can open.
           <div style={{ marginTop: '1rem', display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
             <button type="button" className="ws-btn ws-btn-primary" onClick={() => go({ name: 'new' })}>
               Analyze a Manuscript
             </button>
             <button type="button" className="ws-btn ws-btn-outline" onClick={openFinder}>
-              Find journals ↗
+              Find journals
             </button>
           </div>
         </div>
@@ -234,7 +227,7 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
             {projects.length === 0 ? (
               <div className="ws-empty" style={{ border: 'none', padding: '1rem 0' }}>
                 <strong>No manuscripts yet</strong>
-                Upload a PDF to start an analysis — results, audits, and exports all attach to the project.
+                Upload a PDF to start an analysis. Results, audits, and exports all attach to the project.
                 <div style={{ marginTop: '1rem' }}>
                   <button type="button" className="ws-btn ws-btn-primary" onClick={() => go({ name: 'new' })}>
                     Analyze a Manuscript
@@ -285,15 +278,21 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
                             <td className="num">{p.analysis?.matches.length ?? 0}</td>
                             <td className="num">
                               {p.submissions.length > 0 ? (
-                                <button type="button" className="ws-linkish" onClick={() => go({ name: 'submission-prep', id: p.id })}>
+                                <button
+                                  type="button"
+                                  className="ws-linkish"
+                                  onClick={() =>
+                                    openPortal(p.id, p.submissions[0]?.targetJournalId ?? p.selectedJournalId ?? undefined)
+                                  }
+                                >
                                   {p.submissions.length}
                                 </button>
                               ) : (
-                                '—'
+                                'N/A'
                               )}
                             </td>
-                            <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{latest ? tally(latest) : '—'}</td>
-                            <td style={{ maxWidth: 220 }}>{journal || (p.status === 'completed' ? <span style={{ color: '#808080' }}>Not selected</span> : '—')}</td>
+                            <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{latest ? tally(latest) : 'N/A'}</td>
+                            <td style={{ maxWidth: 220 }}>{journal || (p.status === 'completed' ? <span style={{ color: '#808080' }}>Not selected</span> : 'N/A')}</td>
                             <td>
                               <button type="button" className="ws-linkish" onClick={() => go({ name: 'project', id: p.id })}>
                                 {p.status === 'completed' ? 'View results' : p.status === 'failed' ? 'Retry' : 'Open'}
@@ -335,7 +334,7 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
             {totalAudits === 0 ? (
               <div className="ws-empty" style={{ border: 'none', padding: '1rem 0' }}>
                 <strong>No readiness checks yet</strong>
-                Checks run against a journal chosen from a completed analysis — items that cannot be verified stay
+                Checks run against a journal chosen from a completed analysis. Items that cannot be verified stay
                 marked unknown, never passed.
                 <div style={{ marginTop: '1rem' }}>
                   <button type="button" className="ws-btn ws-btn-primary" onClick={() => go({ name: 'readiness' })}>
@@ -352,32 +351,28 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
                         <Th label="Manuscript" active={rd.key === 'manuscript'} dir={rd.dir} onSort={() => toggleRd('manuscript')} />
                         <Th label="Journal" active={rd.key === 'journal'} dir={rd.dir} onSort={() => toggleRd('journal')} />
                         <Th label="Run" active={rd.key === 'runAt'} dir={rd.dir} onSort={() => toggleRd('runAt')} />
-                        <Th label="Pass" num active={rd.key === 'pass'} dir={rd.dir} onSort={() => toggleRd('pass')} />
-                        <Th label="Attention" num active={rd.key === 'attention'} dir={rd.dir} onSort={() => toggleRd('attention')} />
-                        <Th label="Warning" num active={rd.key === 'warning'} dir={rd.dir} onSort={() => toggleRd('warning')} />
-                        <Th label="Unknown" num active={rd.key === 'unknown'} dir={rd.dir} onSort={() => toggleRd('unknown')} />
+                        <Th label="Results" active={rd.key === 'pass'} dir={rd.dir} onSort={() => toggleRd('pass')} />
                         <th>Engine</th>
                         <th>Export</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {rdRows.map(({ project, audit }) => {
-                        const s = auditSummary(audit)
+                      {rdRows.slice(0, rdLimit).map(({ project, audit }) => {
+                        const engineShort = (audit.engineVersion ?? '').replace('pubrooter-readiness-', '')
                         return (
                           <tr key={audit.id}>
-                            <td>
-                              <button type="button" className="ws-linkish" onClick={() => go({ name: 'project', id: project.id })}>
+                            <td className="ws-td-truncate">
+                              <button type="button" className="ws-linkish" title={project.name} onClick={() => go({ name: 'project', id: project.id })}>
                                 {project.name}
                               </button>
                             </td>
-                            <td style={{ maxWidth: 240 }}>{audit.journalTitle}</td>
+                            <td className="ws-td-truncate" title={audit.journalTitle}>{audit.journalTitle}</td>
                             <td style={{ whiteSpace: 'nowrap' }}>{fmtDT(audit.runAt)}</td>
-                            <td className="num ws-n-good">{s.pass}</td>
-                            <td className="num ws-n-warn">{s.attention}</td>
-                            <td className="num ws-n-bad">{s.warning}</td>
-                            <td className="num ws-n-muted">{s.unknown + s['not-checked']}</td>
+                            <td style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{tally(audit)}</td>
                             <td>
-                              <code style={{ fontSize: 11 }}>{audit.engineVersion}</code>
+                              <code className="ws-engine-chip" title={audit.engineVersion}>
+                                {engineShort || audit.engineVersion}
+                              </code>
                             </td>
                             <td>
                               <button
@@ -394,6 +389,15 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
                           </tr>
                         )
                       })}
+                      {rdRows.length > rdLimit && (
+                        <tr className="ws-rec-more">
+                          <td colSpan={6}>
+                            <button type="button" className="ws-linkish" onClick={() => setRdLimit((l) => l + 10)}>
+                              Show more ({rdRows.length - rdLimit} remaining)
+                            </button>
+                          </td>
+                        </tr>
+                      )}
                     </tbody>
                     <tfoot>
                       <tr>
@@ -401,89 +405,18 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
                           {totalAudits} check{totalAudits === 1 ? '' : 's'} across {projectsWithAudits} manuscript
                           {projectsWithAudits === 1 ? '' : 's'}
                         </td>
-                        <td className="num ws-n-good">{rdTotals.pass}</td>
-                        <td className="num ws-n-warn">{rdTotals.attention}</td>
-                        <td className="num ws-n-bad">{rdTotals.warning}</td>
-                        <td className="num ws-n-muted">{rdTotals.unknown}</td>
-                        <td colSpan={2} style={{ color: '#666' }}>
-                          Totals shown
+                        <td colSpan={3} style={{ color: '#666' }}>
+                          <span className="ws-n-good">{rdTotals.pass}</span> pass ·{' '}
+                          <span className="ws-n-warn">{rdTotals.attention}</span> attention ·{' '}
+                          <span className="ws-n-bad">{rdTotals.warning}</span> warning ·{' '}
+                          <span className="ws-n-muted">{rdTotals.unknown}</span> unknown — totals shown
                         </td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
                 <p className="ws-table-note">
-                  Automated checks support author review — they do not guarantee editorial compliance or acceptance.
-                </p>
-              </>
-            )}
-          </section>
-
-          <section className="ws-card" style={{ marginTop: '1.5rem' }}>
-            <div className="ws-card-head">
-              <h2 className="ws-h2" style={{ margin: 0 }}>
-                Saved journals
-              </h2>
-              <button type="button" className="ws-linkish" onClick={() => go({ name: 'saved' })}>
-                Open Saved Journals →
-              </button>
-            </div>
-            {savedCount === 0 ? (
-              <div className="ws-empty" style={{ border: 'none', padding: '1rem 0' }}>
-                <strong>Nothing saved yet</strong>
-                Save journals from analysis results or the Journal Finder — scores are recorded at save time, never
-                estimated.
-                <div style={{ marginTop: '1rem' }}>
-                  <button type="button" className="ws-btn ws-btn-outline" onClick={openFinder}>
-                    Find journals ↗
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="ws-table-scroll">
-                  <table className="ws-table">
-                    <thead>
-                      <tr>
-                        <Th label="Journal" active={sj.key === 'title'} dir={sj.dir} onSort={() => toggleSj('title')} />
-                        <Th label="Publisher" active={sj.key === 'publisher'} dir={sj.dir} onSort={() => toggleSj('publisher')} />
-                        <Th label="ISSN" active={sj.key === 'issn'} dir={sj.dir} onSort={() => toggleSj('issn')} />
-                        <Th label="Score at save" num active={sj.key === 'score'} dir={sj.dir} onSort={() => toggleSj('score')} />
-                        <Th label="Saved" active={sj.key === 'savedAt'} dir={sj.dir} onSort={() => toggleSj('savedAt')} />
-                        <th>Note</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sjRows.map((s) => (
-                        <tr key={s.id}>
-                          <td>
-                            {s.link ? (
-                              <a href={s.link} target="_blank" rel="noreferrer" style={{ fontWeight: 600 }}>
-                                {s.title} ↗
-                              </a>
-                            ) : (
-                              <span style={{ fontWeight: 600 }}>{s.title}</span>
-                            )}
-                          </td>
-                          <td>{s.publisher ?? '—'}</td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{s.issn ?? '—'}</td>
-                          <td className="num">{s.score ?? '—'}</td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{fmt(s.savedAt)}</td>
-                          <td style={{ maxWidth: 240, color: s.note ? '#333' : '#808080' }}>{s.note || '—'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot>
-                      <tr>
-                        <td colSpan={6} style={{ color: '#666' }}>
-                          {savedCount} journal{savedCount === 1 ? '' : 's'} saved · scores are snapshots recorded at save time
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-                <p className="ws-table-note">
-                  Journal metadata changes on the source side — re-run an analysis for fresh figures.
+                  Automated checks support author review. They do not guarantee editorial compliance or acceptance.
                 </p>
               </>
             )}
@@ -567,7 +500,7 @@ export function Overview({ go, openFinder }: { go: (v: WorkspaceView) => void; o
       )}
 
       <p style={{ fontSize: 11.5, color: '#808080', marginTop: '1.25rem', marginBottom: 0 }}>
-        All figures are computed from your own workspace records — no estimated, model-generated, or sample numbers.
+        All figures are computed from your own workspace records. No estimated, model-generated, or sample numbers.
         Journal metadata comes from OpenAlex and Crossref as recorded at analysis or save time.
       </p>
     </div>

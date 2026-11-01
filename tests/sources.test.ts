@@ -21,14 +21,14 @@ describe('searchOpenAlex', () => {
     })
     const bulkCall = jsonResponse({
       results: [
-        { id: 'https://openalex.org/S1', display_name: 'Eye Journal', topics: [{ display_name: 'Ophthalmology' }], issn_l: '0000-0001', is_oa: false, apc_usd: 2000, works_count: 100 },
-        { id: 'https://openalex.org/S2', display_name: 'Screening Weekly', topics: [], host_organization_name: 'ACME Press' }
+        { id: 'https://openalex.org/S1', display_name: 'Eye Journal', type: 'journal', topics: [{ display_name: 'Ophthalmology' }], issn_l: '0000-0001', is_oa: false, apc_usd: 2000, works_count: 100 },
+        { id: 'https://openalex.org/S2', display_name: 'Screening Weekly', type: 'journal', topics: [], host_organization_name: 'ACME Press' }
       ]
     })
     const nameCall = jsonResponse({
       results: [
-        { id: 'https://openalex.org/S2', display_name: 'Screening Weekly' },
-        { id: 'https://openalex.org/S9', display_name: 'Journal of Keyword Match', topics: [], is_oa: true }
+        { id: 'https://openalex.org/S2', display_name: 'Screening Weekly', type: 'journal' },
+        { id: 'https://openalex.org/S9', display_name: 'Journal of Keyword Match', type: 'journal', topics: [], is_oa: true }
       ]
     })
     const fetchMock = vi.fn().mockResolvedValueOnce(worksCall).mockResolvedValueOnce(bulkCall).mockResolvedValueOnce(nameCall)
@@ -69,7 +69,7 @@ describe('searchOpenAlex', () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new Error('network down'))
-      .mockResolvedValueOnce(jsonResponse({ results: [{ id: 'https://openalex.org/S5', display_name: 'Fallback Journal', topics: [] }] }))
+      .mockResolvedValueOnce(jsonResponse({ results: [{ id: 'https://openalex.org/S5', display_name: 'Fallback Journal', type: 'journal', topics: [] }] }))
     vi.stubGlobal('fetch', fetchMock)
     const res = await searchOpenAlex('Title', ['kw'])
     expect(res).toHaveLength(1)

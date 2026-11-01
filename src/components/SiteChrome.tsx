@@ -9,7 +9,8 @@ interface Props {
 const NAV: { label: string; view: View }[] = [
   { label: 'Home', view: 'home' },
   { label: 'Find journals', view: 'finder' },
-  { label: 'Sources', view: 'sources' }
+  { label: 'Sources', view: 'sources' },
+  { label: 'Workspace', view: 'tool' }
 ]
 
 export function SiteHeader({ view, onNavigate }: Props) {
@@ -21,9 +22,6 @@ export function SiteHeader({ view, onNavigate }: Props) {
           <nav aria-label="Utility">
             <a href="mailto:support@pubrooter.example">Help</a>
             <a href="mailto:legal@pubrooter.example">Contact us</a>
-            <button type="button" onClick={() => onNavigate('tool')}>
-              Sign in
-            </button>
           </nav>
         </div>
       </div>

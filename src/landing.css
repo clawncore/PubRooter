@@ -1,4 +1,4 @@
-/* PubRooter landing — Elsevier/Scopus design-system tokens
+/* PubRooter landing: Elsevier/Scopus design-system tokens
    brand-blue #0056D6 · brand-orange #FF4203 · primary-black #0C0F12
    tints: blue #EBF1F9 · orange #FFF7EF · yellow #FFF8E0 · green #E9F9EE · purple #FDECFD
    neutrals: grey-100 #F6F6F6 · grey-200 #E6E6E6 · grey-700 #666 */
@@ -1082,7 +1082,7 @@
 
 
 /* =========================================================
-   Scopus-grade chrome — utility bar, main bar, breadcrumb
+   Scopus-grade chrome. Utility bar, main bar, breadcrumb
    ========================================================= */
 .sc-top { position: sticky; top: 0; z-index: 60; }
 .sc-utility { background: #0c0f12; }
@@ -1163,7 +1163,7 @@ button:disabled.sc-btn-primary { opacity: 0.55; cursor: not-allowed; }
 .sc-breadcrumb span[aria-current] { color: #333; }
 
 /* =========================================================
-   Journal Finder — centered column, grey page, white panel
+   Journal Finder - centered column, grey page, white panel
    ========================================================= */
 .finder-page {
   background: #f6f6f6;
@@ -1174,7 +1174,7 @@ button:disabled.sc-btn-primary { opacity: 0.55; cursor: not-allowed; }
   width: 100%;
   /* Cap the form panel at a readable width; the cream page behind it keeps
      stretching to the edge of the viewport. auto side margins keep the panel
-     itself centred — with 0 it pinned to the left edge and left a dead band
+     itself centred - with 0 it pinned to the left edge and left a dead band
      of empty page down the right side. */
   max-width: 960px;
   margin: 1.25rem auto 0;
@@ -1201,7 +1201,7 @@ button:disabled.sc-btn-primary { opacity: 0.55; cursor: not-allowed; }
   max-width: 58ch;
 }
 
-/* JF form card inside the white panel — no nested chrome */
+/* JF form card inside the white panel - no nested chrome */
 .finder-top .jf-card {
   border: none;
   border-top: 1px solid #e0e0e0;
@@ -1279,7 +1279,7 @@ button:disabled.sc-btn-primary { opacity: 0.55; cursor: not-allowed; }
 }
 .jf-max { font-size: 12px; color: #808080; }
 
-/* OA agreement — Elsevier info panel (#F2F6FC) */
+/* OA agreement - Elsevier info panel (#F2F6FC) */
 .jf-oa {
   margin-top: 1.5rem;
   background: #f2f6fc;
@@ -1327,7 +1327,7 @@ button:disabled.sc-btn-primary { opacity: 0.55; cursor: not-allowed; }
 }
 
 /* =========================================================
-   Finder results — grey page, white rail + white journal cards
+   Finder results - grey page, white rail + white journal cards
    ========================================================= */
 .jf-results-wrap {
   /* This node also carries .lp-container, whose 1.5rem padding and centred
@@ -1429,7 +1429,7 @@ button:disabled.sc-btn-primary { opacity: 0.55; cursor: not-allowed; }
   .jf-filters { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* Filter rail — Elsevier-style refine panel */
+/* Filter rail - Elsevier-style refine panel */
 .jf-filters {
   background: #fff;
   border: 1px solid #e0e0e0;
@@ -1988,7 +1988,7 @@ button:disabled.sc-btn-primary { opacity: 0.55; cursor: not-allowed; }
   .jf-process-cover { animation: none; }
 }
 
-/* Results toolbar — New search + sort */
+/* Results toolbar: New search + sort */
 .jf-results-tools {
   display: flex;
   align-items: center;
@@ -2014,7 +2014,7 @@ button:disabled.sc-btn-primary { opacity: 0.55; cursor: not-allowed; }
 .jf-newsearch:focus-visible { outline: 2px solid #0056d6; outline-offset: 1px; }
 
 /* =========================================================
-   Journal Finder — responsive pass (all breakpoints)
+   Journal Finder - responsive pass (all breakpoints)
    ========================================================= */
 @media (max-width: 900px) {
   .jf-process { padding: 1.75rem 1.5rem 1.5rem; }
@@ -2049,4 +2049,139 @@ button:disabled.sc-btn-primary { opacity: 0.55; cursor: not-allowed; }
   .finder-h1 { font-size: 19px; }
   .jf-count { font-size: 11px; }
   .jf-visit, .jf-submit { padding: 0.45rem 0.5rem; font-size: 12px; }
+}
+
+/* =========================================================
+   Finder results - publish encouragement CTA (results → upload)
+   ========================================================= */
+.jf-publish-cta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  background: #f0f6ff;
+  border: 1px solid #cfe0fb;
+  border-left: 4px solid var(--brand-blue);
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  margin: 0 0 1rem;
+}
+.jf-publish-cta-copy h3 {
+  font-family: var(--lp-sans);
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--primary-black);
+  margin: 0 0 0.3rem;
+}
+.jf-publish-cta-copy p {
+  font-size: 13px;
+  line-height: 1.55;
+  color: #334155;
+  margin: 0;
+  max-width: 74ch;
+}
+.jf-publish-cta-btn {
+  flex-shrink: 0;
+  background: var(--brand-blue);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 0.7rem 1.3rem;
+  cursor: pointer;
+}
+.jf-publish-cta-btn:hover { filter: brightness(0.93); }
+.jf-publish-cta-btn:focus-visible {
+  outline: 2px solid var(--primary-black);
+  outline-offset: 2px;
+}
+@media (max-width: 560px) {
+  .jf-publish-cta { padding: 0.9rem 1rem; }
+  .jf-publish-cta-btn { width: 100%; }
+}
+
+/* Hero journal ticker */
+.lp-ticker {
+  position: relative;
+  padding: 1.15rem 0 1.3rem;
+  border-top: 1px solid var(--grey-200);
+  background: rgba(255, 255, 255, 0.6);
+}
+.lp-ticker-label {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6b7684;
+  padding-bottom: 0.75rem;
+}
+.lp-ticker-viewport {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+}
+.lp-ticker-track {
+  display: flex;
+  width: max-content;
+  animation: lp-ticker-scroll 55s linear infinite;
+}
+.lp-ticker-viewport:hover .lp-ticker-track { animation-play-state: paused; }
+.lp-ticker-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  white-space: nowrap;
+  padding-right: 1.6rem;
+}
+.lp-ticker-logo {
+  height: 26px;
+  width: auto;
+  max-width: 130px;
+  object-fit: contain;
+  display: block;
+}
+.lp-ticker-fallback {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 6px;
+  background: #eef2f7;
+  border: 1px solid #d7dee8;
+  color: #0056d6;
+  font-family: var(--lp-sans, ui-sans-serif, sans-serif);
+  font-size: 10.5px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  letter-spacing: 0.02em;
+}
+.lp-ticker-name {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1rem;
+  color: #242d38;
+}
+.lp-ticker-item::after {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #b9c2cd;
+  flex: none;
+  margin-left: 0.9rem;
+}
+@keyframes lp-ticker-scroll {
+  from { transform: translate3d(0, 0, 0); }
+  to { transform: translate3d(-50%, 0, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-ticker-track { animation: none; }
+}
+@media (max-width: 640px) {
+  .lp-ticker-name { font-size: 0.92rem; }
+  .lp-ticker-logo { height: 22px; max-width: 100px; }
 }

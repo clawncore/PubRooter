@@ -3,11 +3,14 @@ import {
   SUBMISSION_STAGES,
   SUBMISSION_STATUS_LABEL,
   SUBMISSION_STATUS_CLASS,
+  EVENT_LABEL,
+  allowedTransitions,
   appendEvent,
   makeEvent,
   nextActionFor,
   stageForAttempt,
   transitionAttempt,
+  postSubmissionStats,
   contextFromProject,
   type SubmissionAttempt,
   type SubmissionStatus
@@ -171,5 +174,109 @@ describe('submission workflow model', () => {
     const a = transitionAttempt(draftAttempt(p), 'published', 'Published.')
     expect(a.status).toBe('published')
     expect(SUBMISSION_STATUS_CLASS[a.status]).toBe('published')
+  })
+})
+
+describe('post-submission status transitions', () => {
+  it('draft can move to submitted, rejected, or withdrawn', () => {
+    expect(allowedTransitions('draft')).toEqual(['submitted', 'rejected', 'withdrawn'])
+  })
+
+  it('terminal statuses have no successors', () => {
+    expect(allowedTransitions('rejected')).toEqual([])
+    expect(allowedTransitions('published')).toEqual([])
+    expect(allowedTransitions('withdrawn')).toEqual([])
+  })
+
+  it('accepted can only become published', () => {
+    expect(allowedTransitions('accepted')).toEqual(['published'])
+  })
+
+  it('revision statuses stay in the review chain', () => {
+    expect(allowedTransitions('under_review')).toContain('revision_requested')
+    expect(allowedTransitions('revision_requested')).toContain('revision_submitted')
+    expect(allowedTransitions('revision_submitted')).toContain('under_review')
+    expect(allowedTransitions('revision_submitted')).toContain('rejected')
+  })
+
+  it('records a submission date when a draft is submitted', () => {
+    const a = transitionAttempt(draftAttempt(projectWith()), 'submitted', 'Sent to the portal.')
+    expect(a.submissionDate).toBeTruthy()
+  })
+
+  it('does not record a submission date for non-submitted transitions', () => {
+    const a = transitionAttempt(draftAttempt(projectWith()), 'rejected', 'Rejected on scope.')
+    expect(a.submissionDate).toBeUndefined()
+  })
+
+  it('labels the rerouted event for the history timeline', () => {
+    expect(EVENT_LABEL.rerouted).toBe('Rerouted')
+    expect(EVENT_LABEL.submission_recorded).toBe('Submission recorded')
+  })
+})
+
+describe('postSubmissionStats', () => {
+  function attemptWith(status: SubmissionStatus, extra: Partial<SubmissionAttempt> = {}): SubmissionAttempt {
+    const now = new Date().toISOString()
+    return {
+      id: `s_${status}_${Math.random().toString(36).slice(2, 8)}`,
+      projectId: 'p1',
+      attemptNumber: 1,
+      status,
+      targetJournalId: 'j1',
+      targetJournalTitle: 'Journal of Oncology',
+      requiredDocs: [],
+      createdAt: now,
+      updatedAt: now,
+      events: [],
+      ...extra
+    }
+  }
+
+  it('returns zeros and a null acceptance rate with no attempts', () => {
+    const s = postSubmissionStats([projectWith()])
+    expect(s.manuscripts).toBe(1)
+    expect(s.attempts).toBe(0)
+    expect(s.decided).toBe(0)
+    expect(s.acceptanceRate).toBeNull()
+  })
+
+  it('aggregates outcomes across projects and counts reroutes', () => {
+    const p1 = projectWith()
+    p1.submissions = [
+      attemptWith('rejected'),
+      attemptWith('draft', { reroutedFromAttemptId: 'prev', reroutedFromJournalTitle: 'Old Journal' })
+    ]
+    const p2 = projectWith()
+    p2.submissions = [attemptWith('accepted'), attemptWith('published'), attemptWith('under_review')]
+    const s = postSubmissionStats([p1, p2])
+    expect(s.manuscripts).toBe(2)
+    expect(s.attempts).toBe(5)
+    expect(s.rejected).toBe(1)
+    expect(s.accepted).toBe(2) // accepted + published
+    expect(s.published).toBe(1)
+    expect(s.decided).toBe(3) // rejected + accepted + published
+    expect(s.inReview).toBe(1)
+    expect(s.reroutes).toBe(1)
+    expect(s.acceptanceRate).toBe(67) // round(2 / 3 * 100)
+  })
+
+  it('counts revision states as in review with no acceptance rate', () => {
+    const p = projectWith()
+    p.submissions = [attemptWith('revision_requested'), attemptWith('revision_submitted')]
+    const s = postSubmissionStats([p])
+    expect(s.inReview).toBe(2)
+    expect(s.revisionRequested).toBe(2)
+    expect(s.decided).toBe(0)
+    expect(s.acceptanceRate).toBeNull()
+  })
+
+  it('keeps withdrawn out of the decided denominator', () => {
+    const p = projectWith()
+    p.submissions = [attemptWith('withdrawn'), attemptWith('accepted')]
+    const s = postSubmissionStats([p])
+    expect(s.withdrawn).toBe(1)
+    expect(s.decided).toBe(1)
+    expect(s.acceptanceRate).toBe(100)
   })
 })

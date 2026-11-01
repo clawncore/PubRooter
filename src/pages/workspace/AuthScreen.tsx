@@ -24,13 +24,22 @@ function MicrosoftIcon() {
   )
 }
 
-function Divider({ label }: { label: string }) {
+function EyeIcon({ off }: { off: boolean }) {
+  if (off) {
+    return (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+        <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+        <path d="M14.12 14.12a3 3 0 1 1-4.24-4.24" />
+        <path d="m1 1 22 22" />
+      </svg>
+    )
+  }
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', margin: '0.9rem 0', color: '#999', fontSize: 12 }}>
-      <span style={{ flex: 1, height: 1, background: '#e6e6e6' }} />
-      {label}
-      <span style={{ flex: 1, height: 1, background: '#e6e6e6' }} />
-    </div>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </svg>
   )
 }
 
@@ -43,12 +52,21 @@ export function AuthScreen() {
   const [passphrase, setPassphrase] = useState('')
   const [confirm, setConfirm] = useState('')
   const [localError, setLocalError] = useState('')
+  const [notice, setNotice] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
 
   const cloud = mode === 'cloud'
+
+  function switchTab(next: 'signin' | 'signup') {
+    setTab(next)
+    setLocalError('')
+    setNotice(null)
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault()
     setLocalError('')
+    setNotice(null)
     try {
       if (cloud) {
         if (tab === 'signin') {
@@ -70,7 +88,16 @@ export function AuthScreen() {
             setLocalError('Enter your name.')
             return
           }
-          await signUp({ name: name.trim(), email: email.trim(), affiliation: affiliation.trim() }, passphrase)
+          const result = await signUp(
+            { name: name.trim(), email: email.trim(), affiliation: affiliation.trim() },
+            passphrase
+          )
+          if (result?.needsConfirmation) {
+            setNotice(
+              `We've sent a confirmation link to ${result.email}. Check your inbox, then sign in here.`
+            )
+            return
+          }
         }
       } else {
         if (tab === 'signup') {
@@ -92,12 +119,19 @@ export function AuthScreen() {
         }
       }
     } catch (e2) {
-      setLocalError(e2 instanceof Error ? e2.message : 'Something went wrong.')
+      const msg = e2 instanceof Error ? e2.message : 'Something went wrong.'
+      if (cloud && tab === 'signup' && /already registered|already exists/i.test(msg)) {
+        setLocalError('An account with this email already exists. Sign in instead.')
+        setTab('signin')
+        return
+      }
+      setLocalError(msg)
     }
   }
 
   async function provider(p: 'google' | 'azure') {
     setLocalError('')
+    setNotice(null)
     try {
       await signInWithProvider(p)
     } catch (e2) {
@@ -105,21 +139,27 @@ export function AuthScreen() {
     }
   }
 
+  const headline = cloud
+    ? tab === 'signin'
+      ? 'Welcome back'
+      : 'Create your account'
+    : tab === 'signup'
+      ? 'Create your research workspace'
+      : 'Unlock your workspace'
+
   return (
     <div className="ws-auth-wrap">
-      <form className="ws-auth" onSubmit={submit} aria-label={cloud ? (tab === 'signin' ? 'Sign in' : 'Create account') : tab === 'signup' ? 'Create workspace' : 'Unlock workspace'}>
-        <p style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#ff4203', margin: '0 0 0.5rem' }}>
-          PubRooter Workspace
-        </p>
-        <h1>
-          {cloud
-            ? tab === 'signin'
-              ? 'Sign in to PubRooter'
-              : 'Create your PubRooter account'
-            : tab === 'signup'
-              ? 'Create your research workspace'
-              : 'Unlock your workspace'}
-        </h1>
+      <form
+        className="ws-auth"
+        onSubmit={submit}
+        aria-label={cloud ? (tab === 'signin' ? 'Sign in' : 'Create account') : tab === 'signup' ? 'Create workspace' : 'Unlock workspace'}
+      >
+        <div className="ws-auth-brand">
+          <span className="ws-auth-mark" aria-hidden="true">PR</span>
+          <span>PubRooter</span>
+        </div>
+
+        <h1>{headline}</h1>
         <p className="ws-sub">
           {cloud
             ? 'One account works across Colabwize and PubRooter. Your research workspace is created automatically on first sign-in.'
@@ -129,29 +169,63 @@ export function AuthScreen() {
         </p>
 
         {cloud && (
-          <>
-            <a
-              className="ws-provider ws-provider-colabwize"
-              href={colabwizeHandoffUrl()}
-              style={{ textDecoration: 'none' }}
+          <div className="ws-auth-tabs" role="tablist" aria-label="Sign in or create account">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'signin'}
+              className={tab === 'signin' ? 'active' : ''}
+              onClick={() => switchTab('signin')}
             >
-              <img src="/Colabwize-logo.png" alt="" width="22" height="22" style={{ height: 22, width: 'auto', objectFit: 'contain' }} />
+              Sign in
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'signup'}
+              className={tab === 'signup' ? 'active' : ''}
+              onClick={() => switchTab('signup')}
+            >
+              Create account
+            </button>
+          </div>
+        )}
+
+        {notice && (
+          <p className="ws-notice" role="status">
+            {notice}{' '}
+            <button type="button" className="ws-notice-action" onClick={() => switchTab('signin')}>
+              Go to sign in
+            </button>
+          </p>
+        )}
+        {(localError || error) && (
+          <p role="alert" className="ws-error-box">
+            {localError || error}
+          </p>
+        )}
+
+        {cloud && (
+          <div className="ws-providers">
+            <a className="ws-provider ws-provider-primary" href={colabwizeHandoffUrl()}>
+              <img src="/Colabwize-logo.png" alt="" width="18" height="18" style={{ height: 18, width: 'auto', objectFit: 'contain' }} />
               <span>Continue with Colabwize</span>
             </a>
+            <button type="button" className="ws-provider" onClick={() => void provider('google')} disabled={busy}>
+              <GoogleIcon />
+              <span>Continue with Google</span>
+            </button>
+            <button type="button" className="ws-provider" onClick={() => void provider('azure')} disabled={busy}>
+              <MicrosoftIcon />
+              <span>Continue with Microsoft</span>
+            </button>
+          </div>
+        )}
 
-            <div className="ws-provider-row">
-              <button type="button" className="ws-provider" onClick={() => void provider('google')} disabled={busy}>
-                <GoogleIcon />
-                <span>Google</span>
-              </button>
-              <button type="button" className="ws-provider" onClick={() => void provider('azure')} disabled={busy}>
-                <MicrosoftIcon />
-                <span>Microsoft</span>
-              </button>
-            </div>
-
-            <Divider label="or sign in with email" />
-          </>
+        {cloud && (
+          <div className="ws-auth-divider">
+            <span>or continue with email</span>
+          </div>
         )}
 
         {tab === 'signup' && (
@@ -181,36 +255,58 @@ export function AuthScreen() {
 
         <label className="ws-field">
           <span className="ws-label">{cloud ? 'Password' : 'Passphrase'}</span>
-          <input
-            type="password"
-            value={passphrase}
-            onChange={(e) => setPassphrase(e.target.value)}
-            autoComplete={tab === 'signup' ? 'new-password' : 'current-password'}
-            required
-          />
+          <div className="ws-input-wrap">
+            <input
+              type={showPassword ? 'text' : 'password'}
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+              autoComplete={tab === 'signup' ? 'new-password' : 'current-password'}
+              required
+            />
+            <button
+              type="button"
+              className="ws-input-eye"
+              onClick={() => setShowPassword((s) => !s)}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              tabIndex={-1}
+            >
+              <EyeIcon off={showPassword} />
+            </button>
+          </div>
           <span className="ws-hint">
             {cloud
               ? 'Same password you use for Colabwize. Forgot it? Reset it from your Colabwize account settings.'
-              : 'Minimum 8 characters. Never transmitted anywhere. There is no reset — forgetting it means starting a new workspace.'}
+              : 'Minimum 8 characters. Never transmitted anywhere. There is no reset. Forgetting it means starting a new workspace.'}
           </span>
         </label>
 
         {tab === 'signup' && (
           <label className="ws-field">
             <span className="ws-label">{cloud ? 'Confirm password' : 'Confirm passphrase'}</span>
-            <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="new-password" />
+            <div className="ws-input-wrap">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={confirm}
+                onChange={(e) => setConfirm(e.target.value)}
+                autoComplete="new-password"
+              />
+            </div>
           </label>
         )}
 
-        {(localError || error) && (
-          <p role="alert" className="ws-error-box">
-            {localError || error}
-          </p>
-        )}
-
-        <button type="submit" className="ws-btn ws-btn-primary" disabled={busy} style={{ width: '100%', justifyContent: 'center', padding: '0.6rem' }}>
+        <button
+          type="submit"
+          className="ws-btn ws-btn-primary ws-auth-submit"
+          disabled={busy}
+        >
           {busy
-            ? 'Working…'
+            ? cloud
+              ? tab === 'signin'
+                ? 'Signing in…'
+                : 'Creating account…'
+              : tab === 'signup'
+                ? 'Creating workspace…'
+                : 'Unlocking…'
             : cloud
               ? tab === 'signin'
                 ? 'Sign in'
@@ -220,34 +316,19 @@ export function AuthScreen() {
                 : 'Unlock'}
         </button>
 
-        {cloud && tab === 'signup' && (
-          <p className="ws-hint" style={{ marginTop: '0.75rem', textAlign: 'center' }}>
-            Already have a Colabwize account? Just sign in — your account works here too.
-          </p>
-        )}
-        {cloud && tab === 'signin' && (
-          <p className="ws-hint" style={{ marginTop: '0.75rem', textAlign: 'center' }}>
-            New to PubRooter? Create an account — it will also work on Colabwize.
-          </p>
-        )}
         {!cloud && exists && tab === 'signup' && (
-          <button type="button" className="ws-auth-toggle" onClick={() => { setTab('signin'); setLocalError('') }}>
-            A workspace already exists on this device — unlock it instead
+          <button type="button" className="ws-auth-toggle" onClick={() => { switchTab('signin') }}>
+            A workspace already exists on this device. Unlock it instead
           </button>
         )}
         {!cloud && !exists && tab === 'signin' && (
-          <button type="button" className="ws-auth-toggle" onClick={() => { setTab('signup'); setLocalError('') }}>
-            No workspace yet — create one
-          </button>
-        )}
-        {cloud && (
-          <button type="button" className="ws-auth-toggle" onClick={() => { setTab(tab === 'signin' ? 'signup' : 'signin'); setLocalError('') }}>
-            {tab === 'signin' ? 'Create an account' : 'I already have an account — sign in'}
+          <button type="button" className="ws-auth-toggle" onClick={() => { switchTab('signup') }}>
+            No workspace yet. Create one
           </button>
         )}
         {!cloud && (
           <p className="ws-hint" style={{ marginTop: '0.75rem', textAlign: 'center' }}>
-            Local mode — cloud sign-in (Colabwize / Google / Microsoft) activates when Supabase keys are configured.
+            Local mode. Cloud sign-in (Colabwize / Google / Microsoft) activates when Supabase keys are configured.
           </p>
         )}
       </form>

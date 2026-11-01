@@ -99,7 +99,7 @@ export function SettingsView() {
           {mode === 'cloud' ? (
             <>
               <li>Workspace rows and PDFs are stored in your Colabwize Supabase project, scoped to your account (row-level security).</li>
-              <li>Your account is shared with Colabwize — the same email and password sign you into both products.</li>
+              <li>Your account is shared with Colabwize. The same email and password sign you into both products.</li>
               <li>Manuscript PDFs live in a private storage bucket readable only by your user id.</li>
               <li>Manuscript text is never written to application logs.</li>
             </>
@@ -107,11 +107,11 @@ export function SettingsView() {
             <>
               <li>Workspace contents are encrypted at rest with your passphrase (AES-GCM, PBKDF2-SHA256, 310k iterations).</li>
               <li>PDFs are stored in this browser's IndexedDB only. Manuscript text is never written to application logs.</li>
-              <li>Metadata queries to OpenAlex and Crossref send title/keyword text — never file contents.</li>
+              <li>Metadata queries to OpenAlex and Crossref send title/keyword text. Never file contents.</li>
               <li>Retention: data lives until you delete it. Clearing browser site data destroys the workspace permanently.</li>
             </>
           )}
-          <li>Metadata queries to OpenAlex and Crossref send title/keyword text — never file contents.</li>
+          <li>Metadata queries to OpenAlex and Crossref send title/keyword text - never file contents.</li>
           <li>Third parties: OpenAlex and Crossref (metadata). No AI or OCR provider receives your manuscript.</li>
           <li>Retention: data lives until you delete it.</li>
           <li>Deleting a manuscript project removes its record; stored PDFs are removed with it.</li>

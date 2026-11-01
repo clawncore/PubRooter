@@ -1,32 +1,46 @@
 import { useMemo, useState } from 'react'
 import { useWorkspace } from '../../workspace/WorkspaceContext'
 import { runAnalysis } from '../../workspace/pipeline'
-import { runReadiness, auditSummary } from '../../workspace/readiness'
-import { recommendationsCsv, readinessCsv, comparisonCsv, downloadFile, printReport } from '../../workspace/reports'
+import { auditSummary } from '../../workspace/readiness'
+import { recommendationsCsv, downloadFile, printReport } from '../../workspace/reports'
 import { getFile } from '../../workspace/storage'
-import { uid } from '../../lib/storage'
-import type { FitTier, ReadinessAudit } from '../../workspace/types'
+import { journalSiteUrl } from '../../workspace/journal-url'
+import type { FitTier, ManuscriptProject } from '../../workspace/types'
 import { JournalDrawer } from './JournalDrawer'
+import { ReroutePanel } from './ReroutePanel'
 import type { WorkspaceView } from './WorkspaceApp'
 
 const TIER_INFO: Record<FitTier, { title: string; note: string }> = {
-  tier1: { title: 'Tier 1 — Strongest fit', note: 'Strong evidence of subject and scope alignment with no known major incompatibility.' },
-  tier2: { title: 'Tier 2 — Alternative fits', note: 'Relevant scope with one or more trade-offs, uncertainties, or narrower alignment.' },
-  tier3: { title: 'Tier 3 — Broader options', note: 'Worth considering where scope is relevant but fit is less direct or requirements are unverified.' }
+  tier1: { title: 'Tier 1: Strongest fit', note: 'Strong evidence of subject and scope alignment with no known major incompatibility.' },
+  tier2: { title: 'Tier 2: Alternative fits', note: 'Relevant scope with one or more trade-offs, uncertainties, or narrower alignment.' },
+  tier3: { title: 'Tier 3: Broader options', note: 'Worth considering where scope is relevant but fit is less direct or requirements are unverified.' }
 }
 
 function fmt(iso: string) {
   return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView) => void }) {
+export function ManuscriptDetail({
+  id,
+  go,
+  openCompare,
+  openPortal
+}: {
+  id: string
+  go: (v: WorkspaceView) => void
+  openCompare?: (project: ManuscriptProject) => void
+  openPortal?: (projectId: string, journalId?: string) => void
+}) {
   const { data, update, log } = useWorkspace()
   const [drawerId, setDrawerId] = useState<string | null>(null)
+  // Recommendations render in pages so long tier lists never dump at once.
+  const [recLimits, setRecLimits] = useState<Record<string, number>>({})
   const [editing, setEditing] = useState(false)
   const [rerunNote, setRerunNote] = useState('')
   const [fileNote, setFileNote] = useState('')
   const [editTitle, setEditTitle] = useState('')
   const [editAbstract, setEditAbstract] = useState('')
+  const [abstractOpen, setAbstractOpen] = useState(false)
   const [editKeywords, setEditKeywords] = useState('')
 
   const project = data?.projects.find((p) => p.id === id)
@@ -44,7 +58,6 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
   }
 
   const matches = project.analysis?.matches ?? []
-  const savedIds = new Set(data.savedJournals.map((s) => s.journalId))
   const drawerMatch = matches.find((m) => m.journal.id === drawerId) ?? null
   const compareMatches = project.comparedJournalIds.map((cid) => matches.find((m) => m.journal.id === cid)).filter((m): m is NonNullable<typeof m> => Boolean(m))
   const lastAudit = project.audits[0] ?? null
@@ -68,7 +81,7 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
         void update((ws) => ({ ...ws, projects: ws.projects.map((p) => (p.id === project.id ? { ...p, status } : p)) }))
       })
       await update((ws) => ({ ...ws, projects: ws.projects.map((p) => (p.id === project.id ? result : p)) }))
-      log('analysis', `Re-ran analysis for "${result.name}" — ${result.analysis?.matches.length ?? 0} recommendations.`, project.id)
+      log('analysis', `Re-ran analysis for "${result.name}": ${result.analysis?.matches.length ?? 0} recommendations.`, project.id)
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Analysis failed'
       await update((ws) => ({ ...ws, projects: ws.projects.map((p) => (p.id === project.id ? { ...p, status: 'failed', error: msg } : p)) }))
@@ -88,25 +101,6 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
   }
   void saveEdits
 
-  async function toggleSave(journalId: string, title: string) {
-    if (!data) return
-    const already = data.savedJournals.find((s) => s.journalId === journalId)
-    if (already) {
-      await update((ws) => ({ ...ws, savedJournals: ws.savedJournals.filter((s) => s.journalId !== journalId) }))
-      log('save', `Removed "${title}" from saved journals.`)
-    } else {
-      const m = matches.find((x) => x.journal.id === journalId)
-      await update((ws) => ({
-        ...ws,
-        savedJournals: [
-          { id: uid(), savedAt: new Date().toISOString(), journalId, title, publisher: m?.journal.publisher, issn: m?.journal.issn, link: m?.journal.homepageUrl, score: m?.score },
-          ...ws.savedJournals
-        ]
-      }))
-      log('save', `Saved "${title}".`)
-    }
-  }
-
   async function toggleCompare(journalId: string) {
     if (!project) return
     await update((ws) => ({
@@ -115,39 +109,18 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
         if (p.id !== project.id) return p
         const has = p.comparedJournalIds.includes(journalId)
         const next = has ? p.comparedJournalIds.filter((x) => x !== journalId) : [...p.comparedJournalIds, journalId].slice(-3)
-        return { ...p, comparedJournalIds: next }
+        return { ...p, comparedJournalIds: next, updatedAt: new Date().toISOString() }
       })
     }))
   }
 
-  async function runAudit() {
-    if (!project) return
-    const journal = matches.find((m) => m.journal.id === (project.selectedJournalId ?? matches[0]?.journal.id))
-    const edited = project.edited ?? project.extracted
-    if (!journal || !edited) return
-    const audit = runReadiness(edited, journal.journal, uid())
-    await update((ws) => ({
-      ...ws,
-      projects: ws.projects.map((p) => (p.id === project.id ? { ...p, audits: [audit, ...p.audits].slice(0, 20) } : p))
-    }))
-    log('readiness', `Readiness check run for "${journal.journal.title}".`, project.id)
-  }
-
-  async function resolveCheck(auditId: string, checkId: string) {
+  async function clearCompare() {
     if (!project) return
     await update((ws) => ({
       ...ws,
-      projects: ws.projects.map((p) => {
-        if (p.id !== project.id) return p
-        return {
-          ...p,
-          audits: p.audits.map((a) =>
-            a.id !== auditId
-              ? a
-              : { ...a, checks: a.checks.map((c) => (c.id !== checkId ? c : { ...c, status: 'pass' as const, explanation: `${c.explanation} — marked resolved by author.` })) }
-          )
-        }
-      })
+      projects: ws.projects.map((p) =>
+        p.id === project.id ? { ...p, comparedJournalIds: [], updatedAt: new Date().toISOString() } : p
+      )
     }))
   }
 
@@ -155,7 +128,7 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
     setFileNote('')
     const file = await getFile(project.id).catch(() => null)
     if (!file) {
-      setFileNote('The stored PDF could not be loaded — it may have been removed from this browser or bucket.')
+      setFileNote('The stored PDF could not be loaded. It may have been removed from this browser or bucket.')
       return
     }
     const url = URL.createObjectURL(file)
@@ -169,6 +142,158 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
 
   const isBusy = ['extracting', 'matching', 'generating'].includes(project.status)
 
+  /* ---- Manuscript dashboard derived data ---- */
+  const content = project.edited ?? project.extracted
+  const STATUS_LABEL: Record<string, string> = {
+    draft: 'Draft',
+    uploaded: 'Uploaded',
+    extracting: 'Extracting…',
+    reviewing: 'Needs review',
+    matching: 'Matching…',
+    generating: 'Scoring…',
+    completed: 'Analyzed',
+    failed: 'Failed'
+  }
+  const SUB_LABEL: Record<string, string> = {
+    draft: 'Draft package',
+    submitted: 'Submitted',
+    under_review: 'Under review',
+    revision_requested: 'Revision requested',
+    revision_submitted: 'Revision submitted',
+    accepted: 'Accepted',
+    rejected: 'Rejected',
+    published: 'Published',
+    withdrawn: 'Withdrawn'
+  }
+  const latestSubmission = [...project.submissions].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
+  const selMatch = matches.find((m) => m.journal.id === project.selectedJournalId)
+  const selectedJournal = selMatch?.journal ?? null
+  const auditS = lastAudit ? auditSummary(lastAudit) : null
+  const packagePrepared = project.actionsCompleted.includes('submission_prepared') || project.submissions.length > 0
+  const journalInitials = (selectedJournal?.title ?? '')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join('')
+    .toUpperCase()
+  const pipeline = [
+    { label: 'Extracted', done: !!content },
+    { label: 'Analyzed', done: !!project.analysis },
+    { label: 'Readiness', done: project.audits.length > 0 },
+    { label: 'Submission', done: project.submissions.length > 0 || project.actionsCompleted.includes('submission_prepared') },
+    { label: 'Post-submission', done: project.submissions.some((s) => s.status !== 'draft') },
+    { label: 'Published', done: project.submissions.some((s) => s.status === 'published' || s.status === 'accepted') }
+  ]
+  const fileSizeLabel = project.fileSize
+    ? project.fileSize >= 1024 * 1024
+      ? `${(project.fileSize / 1024 / 1024).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(project.fileSize / 1024))} KB`
+    : null
+
+  const kpis = [
+    {
+      k: 'Length',
+      v: content ? `${content.pageCount} page${content.pageCount === 1 ? '' : 's'}` : 'N/A',
+      s: content ? `${content.wordCount.toLocaleString()} words` : 'Not extracted',
+      tone: ''
+    },
+    {
+      k: 'Keywords',
+      v: content ? String(content.keywords.length) : 'N/A',
+      s: content && content.keywords.length > 0 ? 'keywords detected' : 'None detected',
+      tone: ''
+    },
+    {
+      k: 'Candidates',
+      v: project.analysis ? String(project.analysis.candidateCount) : 'N/A',
+      s: project.analysis ? 'journals retrieved' : 'Analysis not run',
+      tone: 'is-info'
+    },
+    {
+      k: 'Readiness',
+      v: auditS && lastAudit ? `${auditS.pass}/${lastAudit.checks.length}` : 'N/A',
+      s: auditS
+        ? `${auditS.attention + auditS.warning} need attention${auditS.unknown ? ` · ${auditS.unknown} unknown` : ''}`
+        : 'Not run yet',
+      tone: !auditS ? '' : auditS.attention + auditS.warning > 0 ? 'is-warn' : 'is-good'
+    },
+    {
+      k: 'Target journal',
+      v: selectedJournal ? selectedJournal.title : 'N/A',
+      s: selectedJournal ? selectedJournal.publisher ?? 'Publisher unknown' : matches.length > 0 ? 'Not selected' : 'Run analysis first',
+      tone: selectedJournal ? 'is-info' : ''
+    },
+    {
+      k: 'Submission',
+      v: latestSubmission
+        ? SUB_LABEL[latestSubmission.status] ?? latestSubmission.status
+        : packagePrepared
+          ? 'Prepared'
+          : 'Not started',
+      s: latestSubmission ? `Attempt #${latestSubmission.attemptNumber}` : packagePrepared ? 'Package ready' : 'No attempt yet',
+      tone: latestSubmission
+        ? ['published', 'accepted'].includes(latestSubmission.status)
+          ? 'is-good'
+          : 'is-info'
+        : packagePrepared
+          ? 'is-info'
+          : ''
+    }
+  ]
+
+
+  /* ---- Tier / exclusion helpers for recommendations ---- */
+  const tieredIds = project.analysis
+    ? new Set([...project.analysis.tiers.tier1, ...project.analysis.tiers.tier2, ...project.analysis.tiers.tier3])
+    : new Set<string>()
+  const excludedMatches = matches.filter((m) => !tieredIds.has(m.journal.id))
+  const tieredCount = tieredIds.size
+  const exclusionReasons = (project.analysis?.notices ?? [])
+    .filter((n) => n.startsWith('Excluded from tiers:'))
+    .map((n) => n.replace('Excluded from tiers:', '').trim().replace(/\.$/, ''))
+
+  const renderRecRow = (mm: (typeof matches)[number], keyPrefix: string) => {
+    const j = mm.journal
+    const inCompare = project.comparedJournalIds.includes(j.id)
+    const unranked = !tieredIds.has(j.id)
+    const evidence = mm.evidence.map((e) => e.detail).join(' · ') || 'No positive evidence.'
+    return (
+      <tr key={`${keyPrefix}-${j.id}`}>
+        <td className="ws-rec-score">{mm.score}</td>
+        <td>
+          <span className="ws-rec-title" title={j.title}>{j.title}</span>
+          <div className="ws-rec-sub">
+            {j.publisher ?? 'Publisher unknown'}
+            {j.issn ? ` · ISSN ${j.issn}` : ''}
+            {j.isOpenAccess && <span className="ws-chip ws-chip-oa">OA</span>}
+            {typeof j.apcUsd === 'number' && <span className="ws-chip">APC ~US${j.apcUsd.toLocaleString()}</span>}
+            {unranked && <span className="ws-chip ws-chip-excl">Not ranked</span>}
+          </div>
+        </td>
+        <td className="ws-rec-ev" title={evidence}>{evidence}</td>
+        <td className="ws-rec-actions">
+          <button type="button" className="ws-btn ws-btn-outline" onClick={() => setDrawerId(j.id)}>
+            Details
+          </button>
+          <button
+            type="button"
+            className={`ws-btn ${inCompare ? 'ws-btn-outline' : 'ws-btn-ghost'}`}
+            onClick={() => {
+              void toggleCompare(j.id)
+              const nextIds = inCompare
+                ? project.comparedJournalIds.filter((x) => x !== j.id)
+                : [...project.comparedJournalIds, j.id].slice(-3)
+              if (nextIds.length >= 2) openCompare?.({ ...project, comparedJournalIds: nextIds })
+            }}
+          >
+            {inCompare ? 'Compare ✓' : 'Compare'}
+          </button>
+        </td>
+      </tr>
+    )
+  }
+
   return (
     <div>
       <button type="button" className="ws-linkish" onClick={() => go({ name: 'manuscripts' })} style={{ fontSize: 12.5, marginBottom: 8 }}>
@@ -176,16 +301,13 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
       </button>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
         <div>
-          <h1 className="ws-h1">{project.name}</h1>
-          <p className="ws-sub" style={{ marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap' }}>
+            <h1 className="ws-h1" style={{ marginBottom: 0 }}>{project.name}</h1>
+            <span className={`ws-status is-${project.status}`}>{STATUS_LABEL[project.status] ?? project.status}</span>
+          </div>
+          <p className="ws-sub" style={{ margin: '6px 0 10px' }}>
             {project.fileName
-              ? `${project.fileName} · ${
-                  project.fileSize
-                    ? project.fileSize >= 1024 * 1024
-                      ? `${(project.fileSize / 1024 / 1024).toFixed(1)} MB`
-                      : `${Math.max(1, Math.round(project.fileSize / 1024))} KB`
-                    : ''
-                } · `
+              ? `${project.fileName} · ${fileSizeLabel ?? 'size unknown'} · `
               : ''}
             Created {fmt(project.createdAt)} · Updated {fmt(project.updatedAt)}
           </p>
@@ -215,7 +337,11 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
                 Run new analysis
               </button>
               {matches.length > 0 && (
-                <button type="button" className="ws-btn ws-btn-primary" onClick={() => go({ name: 'submission-prep', id: project.id })}>
+                <button
+                  type="button"
+                  className="ws-btn ws-btn-primary"
+                  onClick={() => openPortal?.(project.id, project.selectedJournalId ?? undefined)}
+                >
                   Prepare submission
                 </button>
               )}
@@ -231,7 +357,7 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
 
       {project.error && (
         <p className="ws-error-box" role="alert">
-          {project.error} — provider failures are safe to retry; your manuscript data is unchanged.
+          {project.error}. Provider failures are safe to retry; your manuscript data is unchanged.
         </p>
       )}
       {rerunNote && (
@@ -245,6 +371,130 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
           Analysis in progress: {project.status === 'matching' ? 'querying sources…' : project.status === 'generating' ? 'building results…' : 'extracting…'}
         </p>
       )}
+
+      {/* KPI stat row */}
+      <div className="ws-md-kpis">
+        {kpis.map((t) => (
+          <div key={t.k} className={`ws-md-kpi ${t.tone}`}>
+            <span className="k">{t.k}</span>
+            <b title={t.v}>{t.v}</b>
+            <small>{t.s}</small>
+          </div>
+        ))}
+      </div>
+
+      {/* Two-column academic dashboard: main tables + super sidebar rail */}
+      <div className="ws-md-grid">
+        <main className="ws-md-main">
+      {/* Manuscript details table */}
+      <section className="ws-md-panel" id="details">
+        <div className="ws-md-panel-head">
+          <h2>Manuscript details</h2>
+          <span>Updated {fmt(project.updatedAt)}</span>
+        </div>
+        <div className="ws-md-meta">
+          <div className="ws-md-meta-item is-wide">
+            <span className="k">Title</span>
+            <p className="ws-md-meta-title">{content?.title || 'Untitled'}</p>
+          </div>
+
+          <div className="ws-md-meta-item is-wide is-abstract">
+            <span className="k">Abstract</span>
+            <p className={`ws-md-meta-abstract${abstractOpen ? ' is-open' : ''}`}>
+              {content?.abstract || 'No abstract extracted'}
+            </p>
+            {content?.abstract && content.abstract.length > 400 && (
+              <button type="button" className="ws-linkish" onClick={() => setAbstractOpen(!abstractOpen)}>
+                {abstractOpen ? 'Show less' : 'Show full abstract'}
+              </button>
+            )}
+          </div>
+
+          <div className="ws-md-meta-item">
+            <span className="k">File</span>
+            <p className="v">
+              {project.fileName ?? 'No file stored'}
+              {fileSizeLabel && <> · {fileSizeLabel}</>}
+              {project.hasStoredFile && (
+                <> · <button type="button" className="ws-linkish" onClick={() => void downloadOriginal()}>Download PDF</button></>
+              )}
+            </p>
+          </div>
+          <div className="ws-md-meta-item">
+            <span className="k">Length</span>
+            <p className="v">
+              {content ? `${content.pageCount} page${content.pageCount === 1 ? '' : 's'} · ${content.wordCount.toLocaleString()} words` : 'Not extracted yet'}
+              {content && content.referenceCount > 0 && <> · {content.referenceCount} references detected</>}
+            </p>
+          </div>
+          <div className="ws-md-meta-item">
+            <span className="k">Keywords</span>
+            {content && content.keywords.length > 0 ? (
+              <div className="v">
+                <span className="ws-meta-chips">
+                  {content.keywords.map((k) => (
+                    <span key={k} className="ws-chip">{k}</span>
+                  ))}
+                </span>
+              </div>
+            ) : (
+              <p className="v">None detected</p>
+            )}
+          </div>
+          <div className="ws-md-meta-item">
+            <span className="k">Field</span>
+            <p className="v">
+              {content?.field || 'Unknown'}
+              {content?.articleType ? ` · ${content.articleType}` : ''}
+            </p>
+          </div>
+          <div className="ws-md-meta-item">
+            <span className="k">Created</span>
+            <p className="v">{fmt(project.createdAt)}</p>
+          </div>
+          <div className="ws-md-meta-item">
+            <span className="k">Updated</span>
+            <p className="v">{fmt(project.updatedAt)}</p>
+          </div>
+          <div className="ws-md-meta-item">
+            <span className="k">Analysis</span>
+            <p className="v">
+              {project.analysis
+                ? `${project.analysis.engineVersion} · ${project.analysis.candidateCount} candidates retrieved · ${fmt(project.analysis.ranAt)}`
+                : 'Not run yet'}
+            </p>
+          </div>
+          <div className="ws-md-meta-item">
+            <span className="k">Target journal</span>
+            <p className="v">{selectedJournal?.title ?? (matches.length > 0 ? 'Not selected yet' : 'Run analysis to see candidates')}</p>
+          </div>
+          <div className="ws-md-meta-item">
+            <span className="k">Readiness</span>
+            <p className="v">
+              {lastAudit && auditS
+                ? `${project.audits.length} audit${project.audits.length === 1 ? '' : 's'} · ${auditS.pass} pass · ${auditS.attention} attention · ${auditS.warning} warning · ${auditS.unknown} unknown`
+                : 'Not run yet'}
+            </p>
+          </div>
+          <div className="ws-md-meta-item">
+            <span className="k">Submission</span>
+            <p className="v">
+              {latestSubmission ? (
+                <>
+                  <strong>{SUB_LABEL[latestSubmission.status] ?? latestSubmission.status}</strong>
+                  {' · '}{latestSubmission.targetJournalTitle}
+                  {' · attempt #'}{latestSubmission.attemptNumber}
+                  {latestSubmission.submissionDate && <> · submitted {fmt(latestSubmission.submissionDate)}</>}
+                </>
+              ) : packagePrepared ? (
+                'Package prepared. Not sent yet'
+              ) : (
+                'Not prepared yet'
+              )}
+            </p>
+          </div>
+        </div>
+      </section>
 
       {editing && (project.edited ?? project.extracted) && (
         <div className="ws-card" style={{ marginBottom: '1.25rem' }}>
@@ -269,7 +519,7 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
               type="button"
               className="ws-btn ws-btn-primary"
               onClick={async () => {
-                // Always re-run — even with unchanged fields (e.g. resuming an
+                // Always re-run. Even with unchanged fields (e.g. resuming an
                 // interrupted analysis with nothing to fix).
                 if (editTitle || editAbstract || editKeywords) {
                   const t = editTitle || (project.edited ?? project.extracted)!.title
@@ -297,17 +547,7 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
         </div>
       )}
 
-      {/* extraction summary */}
-      {(project.edited ?? project.extracted) && (
-        <div className="ws-card" style={{ marginBottom: '1.25rem', fontSize: 12.5 }}>
-          <strong>Manuscript:</strong>{' '}
-          {(project.edited ?? project.extracted)!.title || 'Untitled'} ·{' '}
-          {(project.edited ?? project.extracted)!.keywords.length} keywords ·{' '}
-          {(project.edited ?? project.extracted)!.wordCount.toLocaleString()} words extracted ·{' '}
-          {(project.edited ?? project.extracted)!.pageCount} pages
-          {(project.edited ?? project.extracted)!.field && <> · { (project.edited ?? project.extracted)!.field}</>}
-        </div>
-      )}
+      {/* extraction summary lives in the Manuscript dashboard panel above */}
 
       {project.status === 'completed' && project.analysis && (
         <>
@@ -326,220 +566,306 @@ export function ManuscriptDetail({ id, go }: { id: string; go: (v: WorkspaceView
           </div>
 
           <h2 className="ws-h2" style={{ marginTop: 0 }}>Journal recommendations</h2>
-          {(['tier1', 'tier2', 'tier3'] as FitTier[]).map((tier) => {
-            const ids = project.analysis!.tiers[tier]
-            const list = ids.map((tid) => matches.find((m) => m.journal.id === tid)).filter(Boolean)
-            if (list.length === 0) return null
-            return (
-              <section key={tier}>
-                <div className="ws-tier-head">
-                  <h3>{TIER_INFO[tier].title}</h3>
-                  <p>{TIER_INFO[tier].note}</p>
-                </div>
-                {list.map((m) => {
-                  const mm = m!
-                  const j = mm.journal
-                  const isSaved = savedIds.has(j.id)
-                  const inCompare = project.comparedJournalIds.includes(j.id)
-                  const link = j.homepageUrl || (j.sourceUrl?.startsWith('http') ? j.sourceUrl : undefined)
-                  return (
-                    <article key={j.id} className="ws-jcard">
-                      <div>
-                        <h4>{j.title}</h4>
-                        <p className="pub">{j.publisher ?? 'Publisher unknown'}{j.issn ? ` · ISSN ${j.issn}` : ''}</p>
-                        <div className="ws-meta-chips">
-                          <span className="ws-chip">Relevance {mm.score}</span>
-                          {j.isOpenAccess && <span className="ws-chip ws-chip-oa">Open access</span>}
-                          {typeof j.apcUsd === 'number' && <span className="ws-chip">APC ~US${j.apcUsd.toLocaleString()}</span>}
-                          <span className="ws-chip ws-chip-fresh">Verified {fmt(project.analysis!.ranAt)}</span>
-                          <span className="ws-chip">Source: {j.source}</span>
-                        </div>
-                        <p className="why">
-                          <strong>Why it matches:</strong> {mm.evidence.map((e) => e.detail).join('; ') || 'No positive evidence.'}
-                        </p>
-                        <p className="lim">
-                          <strong>Unknowns:</strong> {mm.limitations.join(' ')}
-                        </p>
-                      </div>
-                      <div className="ws-jcard-side">
-                        <span className="ws-score">
-                          {mm.score}
-                          <small>relevance</small>
-                        </span>
-                        <button type="button" className="ws-btn ws-btn-outline" onClick={() => setDrawerId(j.id)}>
-                          View details
-                        </button>
-                        <button type="button" className={`ws-btn ${inCompare ? 'ws-btn-outline' : 'ws-btn-ghost'}`} onClick={() => void toggleCompare(j.id)}>
-                          {inCompare ? 'Compare ✓' : 'Compare'}
-                        </button>
-                        <button type="button" className={`ws-btn ${isSaved ? 'ws-btn-outline' : 'ws-btn-ghost'}`} onClick={() => void toggleSave(j.id, j.title)}>
-                          {isSaved ? 'Saved ✓' : 'Save'}
-                        </button>
-                        {link && (
-                          <a className="ws-btn ws-btn-ghost" href={link} target="_blank" rel="noreferrer" style={{ textDecoration: 'none', justifyContent: 'center' }}>
-                            Submit ↗
-                          </a>
-                        )}
-                      </div>
-                    </article>
-                  )
-                })}
-              </section>
-            )
-          })}
-
-          {compareMatches.length >= 2 && (
-            <>
-              <div className="ws-tier-head">
-                <h3>Compare selected journals</h3>
-                <p>{compareMatches.length} of 3 slots used</p>
-              </div>
-              <div className="ws-card ws-compare-wrap">
-                <table className="ws-compare">
-                  <thead>
-                    <tr>
-                      <th>Attribute</th>
-                      {compareMatches.map((m) => (
-                        <th key={m.journal.id}>{m.journal.title}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr><td>Publisher</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.journal.publisher ?? 'Unknown'}</td>)}</tr>
-                    <tr><td>ISSN</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.journal.issn ?? 'Unknown'}</td>)}</tr>
-                    <tr><td>Relevance</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.score}</td>)}</tr>
-                    <tr><td>Open access</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.journal.isOpenAccess ? 'Yes' : m.journal.isOpenAccess === false ? 'No' : 'Unknown'}</td>)}</tr>
-                    <tr><td>APC (USD)</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.journal.apcUsd ?? 'Unknown'}</td>)}</tr>
-                    <tr><td>Documents</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.journal.worksCount ?? 'Unknown'}</td>)}</tr>
-                    <tr><td>2-yr citedness</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.journal.citedness?.toFixed(1) ?? 'Unknown'}</td>)}</tr>
-                    <tr><td>4-yr citedness</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.journal.citedness4?.toFixed(1) ?? 'Unknown'}</td>)}</tr>
-                    <tr><td>Evidence</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.evidence.map((e) => e.detail).join(' · ')}</td>)}</tr>
-                    <tr><td>Limitations</td>{compareMatches.map((m) => <td key={m.journal.id}>{m.limitations.join(' · ')}</td>)}</tr>
-                  </tbody>
-                </table>
-                <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    type="button"
-                    className="ws-btn ws-btn-ghost"
-                    onClick={() => {
-                      downloadFile(`${project.name.replace(/[^\w-]+/g, '_')}_comparison.csv`, 'text/csv', comparisonCsv([project], compareMatches))
-                      log('report', `Exported comparison CSV for "${project.name}".`, project.id)
-                    }}
-                  >
-                    Export comparison CSV
-                  </button>
-                  <button type="button" className="ws-btn ws-btn-ghost" onClick={() => void update((ws) => ({ ...ws, projects: ws.projects.map((p) => (p.id === project.id ? { ...p, comparedJournalIds: [] } : p)) }))}>
-                    Clear comparison
-                  </button>
-                </div>
-              </div>
-            </>
+          {matches.length === 0 && (
+            <div className="ws-notice" role="status">
+              No candidates were returned from the live sources. Retry “Run new analysis” when connectivity recovers.
+            </div>
+          )}
+          {tieredCount === 0 && matches.length > 0 && (
+            <div className="ws-notice" role="status">
+              <strong>
+                All {matches.length} candidates were excluded from tier ranking
+                {exclusionReasons.length > 0 ? ` \u2014 ${exclusionReasons.join('. ')}` : ''}.
+              </strong>{' '}
+              They are listed below unranked. You can still review their evidence, save, compare, or select one
+              as the target journal for your readiness check.
+            </div>
+          )}
+          {matches.length > 0 && (
+            <div className="ws-table-scroll">
+              <table className="ws-rec-table">
+                <colgroup>
+                  <col className="c-score" />
+                  <col className="c-journal" />
+                  <col className="c-ev" />
+                  <col className="c-actions" />
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th className="c-score">Score</th>
+                    <th>Journal</th>
+                    <th>Why it matches</th>
+                    <th style={{ textAlign: 'right' }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(['tier1', 'tier2', 'tier3'] as FitTier[]).flatMap((tier) => {
+                    const ids = project.analysis!.tiers[tier]
+                    const list = ids.map((tid) => matches.find((m) => m.journal.id === tid)).filter(Boolean)
+                    if (list.length === 0) return []
+                    const shown = Math.min(recLimits[tier] ?? 6, list.length)
+                    return [
+                      <tr className="ws-rec-tier" key={tier}>
+                        <td colSpan={4}>
+                          {TIER_INFO[tier].title}
+                          <span className="ws-rec-tier-note"> · {TIER_INFO[tier].note}</span>
+                        </td>
+                      </tr>,
+                      ...list.slice(0, shown).map((m) => renderRecRow(m!, tier)),
+                      ...(list.length > shown
+                        ? [
+                            <tr key={`${tier}-more`} className="ws-rec-more">
+                              <td colSpan={4}>
+                                <button
+                                  type="button"
+                                  className="ws-linkish"
+                                  onClick={() =>
+                                    setRecLimits((r) => ({ ...r, [tier]: (r[tier] ?? 6) + 10 }))
+                                  }
+                                >
+                                  Show more ({list.length - shown} remaining)
+                                </button>
+                              </td>
+                            </tr>
+                          ]
+                        : [])
+                    ]
+                  })}
+                  {tieredCount === 0 &&
+                    (() => {
+                      const shown = Math.min(recLimits.unranked ?? 6, excludedMatches.length)
+                      return [
+                        ...excludedMatches.slice(0, shown).map((m) => renderRecRow(m, 'unranked')),
+                        ...(excludedMatches.length > shown
+                          ? [
+                              <tr key="unranked-more" className="ws-rec-more">
+                                <td colSpan={4}>
+                                  <button
+                                    type="button"
+                                    className="ws-linkish"
+                                    onClick={() =>
+                                      setRecLimits((r) => ({ ...r, unranked: (r.unranked ?? 6) + 10 }))
+                                    }
+                                  >
+                                    Show more ({excludedMatches.length - shown} remaining)
+                                  </button>
+                                </td>
+                              </tr>
+                            ]
+                          : [])
+                      ]
+                    })()}
+                </tbody>
+              </table>
+            </div>
           )}
 
-          {/* Readiness */}
+          {compareMatches.length === 1 && (
+            <p className="ws-md-muted" style={{ marginTop: '0.75rem', fontSize: 12.5 }}>
+              1 journal selected for comparison. Choose one more to see them side by side.
+            </p>
+          )}
+
+          {compareMatches.length >= 2 && (
+            <div className="ws-compare-bar">
+              <div className="ws-compare-bar-info">
+                <strong>Compare selected journals</strong>
+                <span>{compareMatches.length} of 3 slots used</span>
+              </div>
+              <div className="ws-compare-bar-actions">
+                <button type="button" className="ws-btn ws-btn-primary" onClick={() => openCompare?.(project)}>
+                  Open comparison
+                </button>
+                <button type="button" className="ws-btn ws-btn-ghost" onClick={() => void clearCompare()}>
+                  Clear
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Readiness: full checks live on the Readiness Checks page */}
           <div className="ws-tier-head">
             <h3>Readiness check</h3>
-            <p>Automated checks against extracted content — supports your review, does not guarantee compliance.</p>
+            <p>Automated checks against extracted content. Supports your review, does not guarantee compliance.</p>
           </div>
           <div className="ws-card">
-            <label className="ws-field" style={{ maxWidth: 420 }}>
-              <span className="ws-label">Target journal</span>
-              <select
-                value={project.selectedJournalId ?? matches[0]?.journal.id ?? ''}
-                onChange={(e) =>
-                  void update((ws) => ({
-                    ...ws,
-                    projects: ws.projects.map((p) => (p.id === project.id ? { ...p, selectedJournalId: e.target.value } : p))
-                  }))
-                }
+            <p className="ws-rd-note" style={{ margin: 0 }}>
+              Open the Readiness Checks page to run checks, resolve items, and export reports for this manuscript.
+            </p>
+            <div style={{ marginTop: '0.75rem' }}>
+              <button
+                type="button"
+                className="ws-btn ws-btn-primary"
+                onClick={() => go({ name: 'readiness', id: project.id })}
               >
-                {matches.map((m) => (
-                  <option key={m.journal.id} value={m.journal.id}>
-                    {m.journal.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <button type="button" className="ws-btn ws-btn-primary" onClick={() => void runAudit()} disabled={matches.length === 0}>
-              Run readiness check
-            </button>
-
-            {lastAudit ? (
-              <div style={{ marginTop: '1rem' }}>
-                {(() => {
-                  const s = auditSummary(lastAudit)
-                  return (
-                    <p style={{ fontSize: 12.5, color: '#666', margin: '0 0 0.75rem' }}>
-                      Latest audit: <strong>{lastAudit.journalTitle}</strong> · {fmt(lastAudit.runAt)} · engine{' '}
-                      {lastAudit.engineVersion} · {s.pass} pass · {s.attention} needs attention · {s.warning} warning ·{' '}
-                      {s.unknown} unknown
-                    </p>
-                  )
-                })()}
-                <div className="ws-checks">
-                  {lastAudit.checks.map((c) => (
-                    <div key={c.id} className="ws-check">
-                      <div>
-                        <span className={`ws-badge ws-badge-${c.status}`}>{c.status.replace('-', ' ')}</span>
-                        <div className="ws-check-label" style={{ marginTop: 4 }}>{c.label}</div>
-                      </div>
-                      <div>
-                        <div className="ws-check-exp">{c.explanation}</div>
-                        {c.evidence && <div className="ws-check-evidence">Evidence: {c.evidence}</div>}
-                        {c.sourceUrl && (
-                          <a className="ws-check-evidence" href={c.sourceUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--ws-accent)' }}>
-                            Source: {c.sourceUrl} ↗
-                          </a>
-                        )}
-                        {(c.status === 'attention' || c.status === 'warning') && (
-                          <button type="button" className="ws-linkish" style={{ fontSize: 11.5, marginTop: 4 }} onClick={() => void resolveCheck(lastAudit.id, c.id)}>
-                            Mark as resolved
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.85rem', flexWrap: 'wrap' }}>
-                  <button
-                    type="button"
-                    className="ws-btn ws-btn-ghost"
-                    onClick={() => {
-                      downloadFile(`${project.name.replace(/[^\w-]+/g, '_')}_readiness.csv`, 'text/csv', readinessCsv(lastAudit))
-                      log('report', `Exported readiness CSV for "${project.name}".`, project.id)
-                    }}
-                  >
-                    Export readiness CSV
-                  </button>
-                  <button type="button" className="ws-btn ws-btn-ghost" onClick={() => printReport(project, lastAudit)}>
-                    Print readiness report
-                  </button>
-                </div>
-                {project.audits.length > 1 && (
-                  <p style={{ fontSize: 11.5, color: '#666', marginTop: '0.75rem' }}>
-                    {project.audits.length} audits stored — earlier results are preserved so past reports stay
-                    interpretable when checks change.
-                  </p>
-                )}
-              </div>
-            ) : (
-              <p style={{ fontSize: 12.5, color: '#666', marginTop: '0.75rem' }}>No audit yet for this project.</p>
-            )}
+                Go to Readiness Checks
+              </button>
+            </div>
           </div>
         </>
       )}
+        </main>
+
+        {/* Super sidebar rail: at-a-glance cards for this manuscript */}
+        <aside className="ws-md-rail" aria-label="Manuscript summary">
+          <section className="ws-md-card">
+            <h3>Pipeline</h3>
+            <div className="ws-md-card-body">
+              <ol className="ws-md-steps is-rail" aria-label="Submission pipeline steps">
+                {pipeline.map((s, i) => (
+                  <li key={s.label} className={s.done ? 'done' : 'todo'}>
+                    <i aria-hidden="true">{s.done ? '✓' : i + 1}</i>
+                    {s.label}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </section>
+
+          <section className="ws-md-card">
+            <h3>Target journal</h3>
+            <div className="ws-md-card-body">
+              {selectedJournal ? (
+                <>
+                  <div className="ws-md-journal">
+                    <span className="ws-md-avatar" aria-hidden="true">{journalInitials || 'N/A'}</span>
+                    <div>
+                      <strong>{selectedJournal.title}</strong>
+                      <small>
+                        {selectedJournal.publisher ?? 'Publisher unknown'}
+                        {selectedJournal.issn ? ` · ISSN ${selectedJournal.issn}` : ''}
+                      </small>
+                    </div>
+                  </div>
+                  <div className="ws-md-chips">
+                    {selMatch && <span className="ws-chip">Relevance {selMatch.score}</span>}
+                    {selectedJournal.isOpenAccess && <span className="ws-chip ws-chip-oa">Open access</span>}
+                    {typeof selectedJournal.apcUsd === 'number' && (
+                      <span className="ws-chip">APC ~US${selectedJournal.apcUsd.toLocaleString()}</span>
+                    )}
+                  </div>
+                  <button type="button" className="ws-btn ws-btn-ghost ws-md-full" onClick={() => setDrawerId(selectedJournal.id)}>
+                    View journal details
+                  </button>
+                  {journalSiteUrl(selectedJournal) && (
+                    <a
+                      className="ws-btn ws-btn-ghost ws-md-full"
+                      href={journalSiteUrl(selectedJournal)}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ textDecoration: 'none', justifyContent: 'center' }}
+                    >
+                      Visit website ↗
+                    </a>
+                  )}
+                </>
+              ) : (
+                <p className="ws-md-muted">Pick a candidate from Journal recommendations below.</p>
+              )}
+            </div>
+          </section>
+
+          <section className="ws-md-card">
+            <h3>Readiness</h3>
+            <div className="ws-md-card-body">
+              {lastAudit && auditS ? (
+                <>
+                  <div className="ws-md-mini">
+                    <span className="g"><b>{auditS.pass}</b> pass</span>
+                    <span className="y"><b>{auditS.attention}</b> attention</span>
+                    <span className="o"><b>{auditS.warning}</b> warning</span>
+                    <span className="n"><b>{auditS.unknown}</b> unknown</span>
+                  </div>
+                  <div className="ws-readiness-bar">
+                    <div className="ws-readiness-bar-seg pass" style={{ width: `${(auditS.pass / lastAudit.checks.length) * 100}%` }} />
+                    <div className="ws-readiness-bar-seg attention" style={{ width: `${(auditS.attention / lastAudit.checks.length) * 100}%` }} />
+                    <div className="ws-readiness-bar-seg warning" style={{ width: `${(auditS.warning / lastAudit.checks.length) * 100}%` }} />
+                    <div className="ws-readiness-bar-seg unknown" style={{ width: `${((auditS.unknown + auditS['not-checked']) / lastAudit.checks.length) * 100}%` }} />
+                  </div>
+                </>
+              ) : (
+                <p className="ws-md-muted">No readiness check yet for this journal.</p>
+              )}
+              <button
+                type="button"
+                className="ws-btn ws-btn-outline ws-md-full"
+                onClick={() => go({ name: 'readiness', id: project.id })}
+              >
+                Go to Readiness Checks
+              </button>
+            </div>
+          </section>
+
+          <section className="ws-md-card">
+            <h3>Submission</h3>
+            <div className="ws-md-card-body">
+              <div className="ws-md-sub">
+                <strong>
+                  {latestSubmission
+                    ? SUB_LABEL[latestSubmission.status] ?? latestSubmission.status
+                    : packagePrepared
+                      ? 'Package prepared'
+                      : 'Not prepared yet'}
+                </strong>
+                <small>
+                  {latestSubmission
+                    ? `${latestSubmission.targetJournalTitle} · attempt #${latestSubmission.attemptNumber}`
+                    : packagePrepared
+                      ? 'Not sent yet'
+                      : 'Start from the readiness checklist'}
+                </small>
+              </div>
+              {matches.length > 0 && (
+                <button
+                  type="button"
+                  className="ws-btn ws-btn-primary ws-md-full"
+                  onClick={() => openPortal?.(project.id, project.selectedJournalId ?? undefined)}
+                >
+                  Prepare submission
+                </button>
+              )}
+              {latestSubmission && (
+                <button
+                  type="button"
+                  className="ws-btn ws-btn-ghost ws-md-full"
+                  onClick={() => go({ name: 'pipeline' })}
+                >
+                  Track in Publications
+                </button>
+              )}
+              {latestSubmission && (latestSubmission.status === 'rejected' || latestSubmission.status === 'withdrawn') && (
+                <ReroutePanel
+                  project={project}
+                  previousAttemptId={latestSubmission.id}
+                  onRerouted={(journalId) => openPortal?.(project.id, journalId)}
+                  onFindJournals={() => go({ name: 'find-journals' })}
+                />
+              )}
+            </div>
+          </section>
+        </aside>
+      </div>
 
       {drawerMatch && (
         <JournalDrawer
           match={drawerMatch}
-          saved={savedIds.has(drawerMatch.journal.id)}
-          onSave={() => void toggleSave(drawerMatch.journal.id, drawerMatch.journal.title)}
           onClose={() => setDrawerId(null)}
-          onCompare={() => void toggleCompare(drawerMatch.journal.id)}
+          onCompare={() => {
+            void toggleCompare(drawerMatch.journal.id)
+            const active = project.comparedJournalIds.includes(drawerMatch.journal.id)
+            const nextIds = active
+              ? project.comparedJournalIds.filter((x) => x !== drawerMatch.journal.id)
+              : [...project.comparedJournalIds, drawerMatch.journal.id].slice(-3)
+            if (nextIds.length >= 2) {
+              setDrawerId(null)
+              openCompare?.({ ...project, comparedJournalIds: nextIds })
+            }
+          }}
           compareActive={project.comparedJournalIds.includes(drawerMatch.journal.id)}
           ranAt={project.analysis?.ranAt}
         />
       )}
+
     </div>
   )
 }

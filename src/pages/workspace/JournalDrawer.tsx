@@ -1,11 +1,10 @@
 import { useEffect } from 'react'
 import type { JournalMatch } from '../../types'
 import { formatBytes } from '../../workspace/pdf'
+import { journalSiteUrl } from '../../workspace/journal-url'
 
 interface Props {
   match: JournalMatch
-  saved: boolean
-  onSave: () => void
   onClose: () => void
   onCompare?: () => void
   compareActive?: boolean
@@ -17,17 +16,27 @@ function fmt(iso?: string) {
   return new Date(iso).toLocaleString(undefined, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
-export function JournalDrawer({ match, saved, onSave, onClose, onCompare, compareActive, ranAt }: Props) {
+export function JournalDrawer({ match, onClose, onCompare, compareActive, ranAt }: Props) {
   const j = match.journal
-  const link = j.homepageUrl || (j.sourceUrl?.startsWith('http') ? j.sourceUrl : undefined)
+  // Real journal website only. Never fall back to openalex.org records or
+  // article DOI links, which are provenance, not the journal's site.
+  const link = journalSiteUrl(j)
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape') onClose()
     }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
   }, [onClose])
+
+  const evidence = match.evidence
+  const limitations = match.limitations
 
   return (
     <div className="ws-drawer-back" onClick={onClose} role="presentation">
@@ -40,79 +49,130 @@ export function JournalDrawer({ match, saved, onSave, onClose, onCompare, compar
       >
         <div className="ws-drawer-head">
           <div>
+            <p className="ws-drawer-kicker">Journal details</p>
             <h2>{j.title}</h2>
-            <p style={{ fontSize: 12.5, color: '#666', margin: '0.3rem 0 0' }}>{j.publisher ?? 'Publisher unknown'}</p>
+            <p className="ws-drawer-sub">{j.publisher ?? 'Publisher unknown'}</p>
           </div>
           <button type="button" className="ws-drawer-close" onClick={onClose}>
             Close ✕
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-          <button type="button" className={`ws-btn ${saved ? 'ws-btn-outline' : 'ws-btn-primary'}`} onClick={onSave}>
-            {saved ? 'Saved ✓' : 'Save journal'}
-          </button>
+        <div className="ws-drawer-actions">
           {onCompare && (
             <button type="button" className={`ws-btn ${compareActive ? 'ws-btn-outline' : 'ws-btn-ghost'}`} onClick={onCompare}>
               {compareActive ? 'In comparison ✓' : 'Add to comparison'}
             </button>
           )}
           {link && (
-            <a className="ws-btn ws-btn-ghost" href={link} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+            <a className="ws-btn ws-btn-ghost" href={link} target="_blank" rel="noreferrer">
               Official site ↗
             </a>
           )}
         </div>
 
-        <dl className="ws-dl">
-          <dt>Relevance score</dt>
-          <dd>
-            <strong>{match.score}</strong> / 100 — a keyword and metadata relevance score, not a probability of
-            acceptance.
-          </dd>
+        <section className="ws-drawer-box">
+          <h3>Relevance</h3>
+          <div className="ws-drawer-score">
+            <span className="ws-drawer-score-num">{match.score}</span>
+            <span className="ws-drawer-score-den">/ 100</span>
+          </div>
+          <span className="ws-drawer-score-bar" aria-hidden="true">
+            <i style={{ width: `${Math.max(0, Math.min(100, match.score))}%` }} />
+          </span>
+          <p className="ws-drawer-note">
+            A keyword and metadata relevance score. It is not a probability of acceptance.
+          </p>
+        </section>
 
-          <dt>Why it matches</dt>
-          <dd>
-            <ul style={{ margin: '0.2rem 0 0', paddingLeft: '1.1rem' }}>
-              {match.evidence.map((e, i) => (
-                <li key={i} style={{ marginBottom: 4 }}>
-                  <strong>{e.field}</strong> (weight {e.weight}): {e.detail}
+        <section className="ws-drawer-box">
+          <h3>Why it matches</h3>
+          {evidence.length > 0 ? (
+            <ul className="ws-drawer-list">
+              {evidence.map((e, i) => (
+                <li key={i}>
+                  <span className="ws-drawer-list-label">{e.field}</span>
+                  <span className="ws-drawer-list-weight">weight {e.weight}</span>
+                  <span className="ws-drawer-list-detail">{e.detail}</span>
                 </li>
               ))}
-              {match.evidence.length === 0 && <li>No positive evidence found.</li>}
             </ul>
-          </dd>
+          ) : (
+            <p className="ws-drawer-note">No positive evidence found.</p>
+          )}
+        </section>
 
-          <dt>Uncertainties and mismatches</dt>
-          <dd>
-            <ul style={{ margin: '0.2rem 0 0', paddingLeft: '1.1rem', color: '#666' }}>
-              {match.limitations.map((l, i) => (
-                <li key={i} style={{ marginBottom: 4 }}>{l}</li>
+        {limitations.length > 0 && (
+          <section className="ws-drawer-box is-warn">
+            <h3>Uncertainties and mismatches</h3>
+            <ul className="ws-drawer-list is-plain">
+              {limitations.map((l, i) => (
+                <li key={i}>{l}</li>
               ))}
             </ul>
-          </dd>
+          </section>
+        )}
 
-          <dt>Subject areas</dt>
-          <dd>{j.subjects.length > 0 ? j.subjects.slice(0, 8).join('; ') : 'Not available from source metadata.'}</dd>
+        <section className="ws-drawer-box">
+          <h3>Journal profile</h3>
+          <dl className="ws-drawer-grid">
+            <div>
+              <dt>Subject areas</dt>
+              <dd>{j.subjects.length > 0 ? j.subjects.slice(0, 8).join('; ') : 'Not available from source metadata.'}</dd>
+            </div>
+            <div>
+              <dt>Open access</dt>
+              <dd>
+                {j.isOpenAccess ? 'Listed as open access' : j.isOpenAccess === false ? 'Not listed as open access' : 'Unknown'}
+              </dd>
+            </div>
+            <div>
+              <dt>APC</dt>
+              <dd>
+                {typeof j.apcUsd === 'number' ? `Near US$${j.apcUsd.toLocaleString()} (verify before submission)` : 'Not available in open metadata'}
+              </dd>
+            </div>
+            <div>
+              <dt>Article types</dt>
+              <dd>Not verified. Check the journal's guide for authors.</dd>
+            </div>
+          </dl>
+        </section>
 
-          <dt>Open access</dt>
-          <dd>
-            {j.isOpenAccess ? 'Listed as open access in OpenAlex' : j.isOpenAccess === false ? 'Not listed as open access' : 'Unknown'}
-            {typeof j.apcUsd === 'number' ? ` · APC near US$${j.apcUsd.toLocaleString()} (verify before submission)` : ' · APC not available in open metadata'}
-          </dd>
+        <section className="ws-drawer-box is-warn">
+          <h3>Indexing</h3>
+          <p className="ws-drawer-note">
+            PubRooter holds no licensed indexing evidence. Appearing in OpenAlex or Crossref does{' '}
+            <strong>not</strong> mean MEDLINE, PubMed, Scopus, or Web of Science indexing. Verify on the
+            journal's site before claiming indexing anywhere.
+          </p>
+        </section>
 
-          <dt>Indexing</dt>
-          <dd>
-            No licensed indexing evidence is held by PubRooter. Appearing in OpenAlex or Crossref does{' '}
-            <strong>not</strong> mean MEDLINE, PubMed, Scopus, or Web of Science indexing. Verify on the journal's
-            site before claiming indexing anywhere.
-          </dd>
+        <section className="ws-drawer-box">
+          <h3>Identifiers</h3>
+          <dl className="ws-drawer-grid">
+            <div>
+              <dt>ISSN</dt>
+              <dd>{j.issn ?? 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt>Documents indexed</dt>
+              <dd>{j.worksCount?.toLocaleString() ?? 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt>2-yr mean citedness</dt>
+              <dd>{j.citedness != null ? j.citedness.toFixed(1) : 'Unknown'}</dd>
+            </div>
+            <div>
+              <dt>4-yr mean citedness</dt>
+              <dd>{j.citedness4 != null ? j.citedness4.toFixed(1) : 'Unknown'}</dd>
+            </div>
+          </dl>
+        </section>
 
-          <dt>Article types supported</dt>
-          <dd>Not verified — check the journal's guide for authors.</dd>
-
-          <dt>Evidence sources</dt>
-          <dd>
+        <section className="ws-drawer-box">
+          <h3>Evidence sources</h3>
+          <p className="ws-drawer-source">
             {j.source === 'openalex' && (
               <a href="https://openalex.org" target="_blank" rel="noreferrer">OpenAlex source record</a>
             )}
@@ -123,24 +183,14 @@ export function JournalDrawer({ match, saved, onSave, onClose, onCompare, compar
                 <a href={j.sourceUrl} target="_blank" rel="noreferrer">Source record ↗</a>
               </>
             )}
-            <br />
-            <span style={{ color: '#666' }}>Fetched at analysis time: {fmt(ranAt)}</span>
-          </dd>
-
-          <dt>Identifiers</dt>
-          <dd>
-            ISSN: {j.issn ?? 'Unknown'} · Documents indexed: {j.worksCount?.toLocaleString() ?? 'Unknown'} ·{' '}
-            {j.citedness != null ? `2-yr mean citedness ${j.citedness.toFixed(1)}` : '2-yr citedness unknown'} ·{' '}
-            {j.citedness4 != null ? `4-yr mean citedness ${j.citedness4.toFixed(1)}` : '4-yr citedness unknown'}
-          </dd>
-
+          </p>
+          <p className="ws-drawer-note">Fetched at analysis time: {fmt(ranAt)}</p>
           {j.source === 'crossref' && (
-            <>
-              <dt>File note</dt>
-              <dd>Crossref records carry less detail than OpenAlex — topics, APC, and OA flags may be missing.</dd>
-            </>
+            <p className="ws-drawer-note">
+              Crossref records carry less detail than OpenAlex. Topics, APC, and open-access flags may be missing.
+            </p>
           )}
-        </dl>
+        </section>
       </aside>
     </div>
   )

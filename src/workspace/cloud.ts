@@ -66,6 +66,8 @@ type AttemptRow = {
   readiness_audit_id: string | null
   decision: SubmissionAttempt['decision'] | null
   revision: SubmissionAttempt['revision'] | null
+  rerouted_from_attempt_id?: string | null
+  rerouted_from_journal_title?: string | null
   created_at: string
   updated_at: string
 }
@@ -160,7 +162,7 @@ export async function loadWorkspaceCloud(): Promise<WorkspaceData> {
     sb.from('pubrooter_saved_journals').select('*').eq('user_id', uid).order('saved_at', { ascending: false }),
     sb.from('pubrooter_activity_events').select('*').eq('user_id', uid).order('at', { ascending: false }).limit(200),
     // Attempts + events load in one pass. If the 0002 migration has not been
-    // applied yet (tables missing), the query 404s — treat that as "no
+    // applied yet (tables missing), the query 404s. Treat that as "no
     // attempts" instead of failing the whole workspace.
     sb.from('pubrooter_submission_attempts').select('*').eq('user_id', uid).order('created_at', { ascending: true }).then((r) => (r.error && r.error.code === '42P01' ? { data: [] as AttemptRow[], error: null } : r)),
     sb.from('pubrooter_submission_events').select('*').eq('user_id', uid).order('at', { ascending: true }).then((r) => (r.error && r.error.code === '42P01' ? { data: [] as EventRow[], error: null } : r))
@@ -225,6 +227,8 @@ export async function loadWorkspaceCloud(): Promise<WorkspaceData> {
       readinessAuditId: a.readiness_audit_id ?? null,
       decision: a.decision ?? undefined,
       revision: a.revision ?? undefined,
+      reroutedFromAttemptId: a.rerouted_from_attempt_id ?? null,
+      reroutedFromJournalTitle: a.rerouted_from_journal_title ?? null,
       createdAt: a.created_at,
       updatedAt: a.updated_at,
       events: eventsByAttempt.get(a.id) ?? []
@@ -319,7 +323,7 @@ export async function upsertProjectCloud(project: ManuscriptProject): Promise<vo
 }
 
 /**
- * Attempt persistence is incremental — only attempt ids whose persisted
+ * Attempt persistence is incremental. Only attempt ids whose persisted
  * updated_at differs from the in-memory record are written. The event
  * history is append-only: upsert by event id, never delete/reinsert, so
  * an interrupted save cannot erase earlier history.
@@ -348,13 +352,13 @@ async function syncAttemptsCloud(project: ManuscriptProject, uid: string): Promi
     .select('id, updated_at')
     .eq('project_id', project.id)
   if (existingErr) {
-    if (existingErr.code === '42P01') return // 0002 migration not applied yet — local mode still holds the data
+    if (existingErr.code === '42P01') return // 0002 migration not applied yet. Local mode still holds the data
     throw new Error(existingErr.message)
   }
 
   const known = new Map<string, string>((existing ?? []).map((r) => [r.id, r.updated_at]))
 
-  // Event rows to upsert — only events the server has never seen (event ids
+  // Event rows to upsert - only events the server has never seen (event ids
   // are client-stable, so an upsert is idempotent and never duplicates).
   const eventRows: { id: string; attempt_id: string; user_id: string; at: string; type: string; status: string | null; note: string | null }[] = []
   const attemptRows: Record<string, unknown>[] = []
@@ -379,6 +383,8 @@ async function syncAttemptsCloud(project: ManuscriptProject, uid: string): Promi
         readiness_audit_id: a.readinessAuditId ?? null,
         decision: a.decision ?? null,
         revision: a.revision ?? null,
+        rerouted_from_attempt_id: a.reroutedFromAttemptId ?? null,
+        rerouted_from_journal_title: a.reroutedFromJournalTitle ?? null,
         created_at: a.createdAt,
         updated_at: a.updatedAt
       })
@@ -388,7 +394,7 @@ async function syncAttemptsCloud(project: ManuscriptProject, uid: string): Promi
 
   // Attempt deletes: server rows no longer present in the project record
   // (a rejected attempt is never deleted by the app, but wipe/export flows
-  // could produce this state) — remove their events too.
+  // could produce this state) - remove their events too.
   const localIds = new Set(project.submissions.map((a) => a.id))
   const staleIds = [...known.keys()].filter((id) => !localIds.has(id))
   if (staleIds.length > 0) {
@@ -398,7 +404,16 @@ async function syncAttemptsCloud(project: ManuscriptProject, uid: string): Promi
   }
 
   if (attemptRows.length > 0) {
-    const { error } = await sb.from('pubrooter_submission_attempts').upsert(attemptRows, { onConflict: 'id' })
+    let { error } = await sb.from('pubrooter_submission_attempts').upsert(attemptRows, { onConflict: 'id' })
+    if (error && error.code === '42703') {
+      // Migration 0003 not applied yet — persist without the reroute link
+      // columns so attempt tracking still syncs.
+      for (const row of attemptRows) {
+        delete row.rerouted_from_attempt_id
+        delete row.rerouted_from_journal_title
+      }
+      ;({ error } = await sb.from('pubrooter_submission_attempts').upsert(attemptRows, { onConflict: 'id' }))
+    }
     if (error) {
       if (error.code === '42P01') return
       throw new Error(error.message)

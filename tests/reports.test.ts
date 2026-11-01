@@ -66,7 +66,7 @@ describe('recommendationsCsv', () => {
   it('includes headers and escaped values', () => {
     expect(csv.split('\r\n')[0]).toContain('Journal')
     expect(csv).toContain('"Journal of ""Oncology"", Today"')
-    expect(csv).toContain('Tier 1 — Strongest fit')
+    expect(csv).toContain('Tier 1: Strongest fit')
     expect(csv).toContain('openalex')
     expect(csv).toContain('Relevance score (0-100)')
   })

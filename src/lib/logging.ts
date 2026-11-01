@@ -10,7 +10,7 @@ export const logger = {
     console.error(`[ERROR] ${message}`, data ? data : '')
   },
   debug: (message: string, data?: any) => {
-    if (process.env.NODE_ENV === 'development') {
+    if (import.meta.env.DEV) {
       console.log(`[DEBUG] ${message}`, data ? data : '')
     }
   }

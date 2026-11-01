@@ -1,6 +1,6 @@
-import { JSDOM } from 'jsdom'
 import type { JournalCandidate } from '../types'
 import type { JournalRequirements } from './submissions'
+import { journalSiteUrl } from './journal-url'
 import { logger } from '../lib/logging'
 
 /**
@@ -481,7 +481,7 @@ export class JournalScraper {
             title: 'Abstract Requirements',
             content: 'Abstract must be structured with Background, Methods, Results, Conclusion sections. Word limit: 250 words.',
             type: 'required',
-            sourceUrl: journal.homepageUrl
+            sourceUrl: journalSiteUrl(journal)
           }
         ],
         requirements: this.createJournalSpecificRequirements(journal),
@@ -525,7 +525,7 @@ export class JournalScraper {
         ],
         contactInfo: {
           email: `submissions@${journal.title.toLowerCase().replace(/\s+/g, '')}.org`,
-          website: journal.homepageUrl
+          website: journalSiteUrl(journal)
         },
         lastUpdated: new Date().toISOString(),
         sourceReliability: 'high'
@@ -787,7 +787,7 @@ export class JournalScraper {
         },
         submissionSystem: {
           name: 'Journal Submission Portal',
-          url: journal.homepageUrl || 'https://submission.example.com',
+          url: journalSiteUrl(journal) ?? '',
           instructions: 'Please upload all files in the required formats.'
         },
         compatibility: [
@@ -943,7 +943,7 @@ export class JournalScraper {
         timeline: [],
         faqs: [],
         contactInfo: {
-          website: journal.homepageUrl
+          website: journalSiteUrl(journal)
         },
         lastUpdated: new Date().toISOString(),
         sourceReliability: 'low'

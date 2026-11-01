@@ -4,12 +4,14 @@ import type { JournalCandidate, JournalMatch, Manuscript } from '../types'
 import { searchOpenAlex } from '../api/openalex'
 import { searchCrossref } from '../api/crossref'
 import { rankJournals } from '../lib/matching'
+import { matchCacheKey, readMatchCache, writeMatchCache } from '../lib/match-cache'
 import { uid } from '../lib/storage'
 import { FinderProcess, type ProcessStage } from './FinderProcess'
 import { FinderResults, InfoDot, ResultsBreadcrumb } from './FinderResults'
 
 interface Props {
   onNavigate: (v: View, d?: Draft) => void
+  onStartUpload?: () => void
 }
 
 const MAX_ABSTRACT = 5000
@@ -36,7 +38,7 @@ function stagesFor(percent: number): ProcessStage[] {
   })
 }
 
-export function Finder({ onNavigate }: Props) {
+export function Finder({ onNavigate, onStartUpload }: Props) {
   const [phase, setPhase] = useState<Phase>('form')
   const [tab, setTab] = useState<Tab>('abstract')
   const [title, setTitle] = useState('')
@@ -91,19 +93,31 @@ export function Finder({ onNavigate }: Props) {
 
       const results: JournalCandidate[] = []
       const notices: string[] = []
-      const [oaRes, crRes] = await Promise.allSettled([
-        searchOpenAlex(manuscript.title, manuscript.keywords),
-        searchCrossref(manuscript.title, manuscript.keywords)
-      ])
-      if (oaRes.status === 'fulfilled') results.push(...oaRes.value)
-      else notices.push('OpenAlex unreachable — matches below may be partial.')
-      if (crRes.status === 'fulfilled') results.push(...crRes.value)
-      else notices.push('Crossref unreachable — matches below may be partial.')
-      if (results.length === 0) notices.push('No live results. Check your connection and try again.')
+      const cacheKey = matchCacheKey(manuscript.title, manuscript.abstract, manuscript.keywords)
+      let matches: JournalMatch[]
+      const cached = readMatchCache(cacheKey)
+      if (cached) {
+        matches = cached.matches
+        notices.push(...cached.notices)
+        targetRef.current = 92
+      } else {
+        const [oaRes, crRes] = await Promise.allSettled([
+          searchOpenAlex(manuscript.title, manuscript.keywords),
+          searchCrossref(manuscript.title, manuscript.keywords)
+        ])
+        if (oaRes.status === 'fulfilled') results.push(...oaRes.value)
+        else notices.push('OpenAlex unreachable. Matches below may be partial.')
+        if (crRes.status === 'fulfilled') results.push(...crRes.value)
+        else notices.push('Crossref unreachable. Matches below may be partial.')
+        if (results.length === 0) notices.push('No live results. Check your connection and try again.')
 
-      targetRef.current = 72
-      const matches = rankJournals(manuscript, results)
-      targetRef.current = 92
+        targetRef.current = 72
+        matches = rankJournals(manuscript, results)
+        targetRef.current = 92
+        if (oaRes.status === 'fulfilled' && crRes.status === 'fulfilled' && matches.length > 0) {
+          writeMatchCache(cacheKey, { matches, notices: [...notices], candidateCount: results.length })
+        }
+      }
 
       const elapsed = performance.now() - started
       const wait = Math.max(0, MIN_PROCESS_MS - elapsed)
@@ -252,7 +266,7 @@ export function Finder({ onNavigate }: Props) {
               <p>
                 Many institutions have agreements which cover some or all of the cost of publishing open access. Enter
                 the corresponding author's institution to see what to verify before submission. Other information
-                provided at submission — country, funder, or society membership — can also reduce the price.
+                provided at submission. Country, funder, or society membership - can also reduce the price.
               </p>
               <label className="jf-field jf-oa-field">
                 <span className="jf-label">Corresponding author's institution</span>
@@ -271,7 +285,7 @@ export function Finder({ onNavigate }: Props) {
         {phase === 'process' && <FinderProcess percent={percent} stages={stagesFor(percent)} />}
 
         {phase === 'results' && (
-          <FinderResults matches={allMatches} apiNotice={apiNotice} onNewSearch={handleNewSearch} />
+          <FinderResults matches={allMatches} apiNotice={apiNotice} onNewSearch={handleNewSearch} onStartUpload={onStartUpload} />
         )}
       </main>
     </div>

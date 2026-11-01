@@ -1,307 +1,190 @@
 import { supabase } from './supabase'
-import { SessionManager } from './session-manager'
+import { authTrace } from './auth-trace'
 
-export interface User {
-  id: string
-  email: string
-  name: string
-  avatar?: string
-  provider: 'email' | 'google' | 'azure' | null
-  createdAt: string
-  emailConfirmed?: boolean
-}
+/**
+ * Session-recovery layer.
+ *
+ * Session-related failures (expired/refresh-dead tokens, 401s) must attempt
+ * recovery before the app declares the session gone. Recovery here means
+ * restoring a *live* Supabase session. Silently refreshing it when the
+ * refresh token still works, or performing a fresh sign-in when credentials
+ * can be obtained. Nothing in this module wipes state or signs the user out;
+ * only when recovery is impossible or fails does the caller get an
+ * actionable error message back.
+ */
 
-export interface AuthState {
-  user: User | null
-  session: SessionManager | null
-  isLoading: boolean
-  isAuthenticated: boolean
-}
+const SIGNED_IN_KEY = 'pubrooter.auth.signed-in.v1'
+const EMAIL_KEY = 'pubrooter.auth.email.v1'
 
-export class AuthService {
-  private static instance: AuthService
-  private currentSession: SessionManager | null = null
-  private authState: AuthState = {
-    user: null,
-    session: null,
-    isLoading: true,
-    isAuthenticated: false
-  }
+const ACTIONABLE_EXPIRED = 'Your session expired. Sign in again to continue.'
+const ACTIONABLE_REFRESH = 'Your session could not be refreshed. Sign in again to continue.'
 
-  public static getInstance(): AuthService {
-    if (!AuthService.instance) {
-      AuthService.instance = new AuthService()
-    }
-    return AuthService.instance
-  }
+let knownEmail: string | null = null
 
-  async initialize(): Promise<void> {
-    try {
-      this.authState.isLoading = true
+/* ------------------------- session-state markers ------------------------- */
 
-      // Check for existing session in localStorage
-      const storedSessionId = localStorage.getItem('pubrooter_session_id')
-
-      if (storedSessionId) {
-        // Validate existing session
-        const sessionManager = SessionManager.getInstance()
-        const session = await sessionManager.validateSession(storedSessionId)
-
-        if (session && !this.isExpired(session)) {
-          // Load user data from session
-          const user = await this.loadUserData(session.userId)
-          this.currentSession = sessionManager
-          this.authState.user = user
-          this.authState.isAuthenticated = true
-        } else {
-          // Session expired or invalid, clean up
-          localStorage.removeItem('pubrooter_session_id')
-          await SessionManager.getInstance().invalidateSession(storedSessionId)
-        }
-      }
-
-      // Set up auth state change listeners if supabase is available
-      if (supabase) {
-        this.setupAuthListeners()
-      }
-    } finally {
-      this.authState.isLoading = false
-    }
-  }
-
-  private isExpired(session: any): boolean {
-    return new Date() > new Date(session.expiresAt)
-  }
-
-  private async loadUserData(userId: string): Promise<User> {
-    if (!supabase) {
-      // Fallback to local storage for demo purposes
-      const stored = localStorage.getItem('pubrooter_user_data')
-      if (stored) {
-        return JSON.parse(stored)
-      }
-      throw new Error('User not found')
-    }
-
-    try {
-      const { data, error } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single()
-
-      if (error) {
-        throw error
-      }
-
-      return {
-        id: data.id,
-        email: data.email,
-        name: data.name,
-        avatar: data.avatar,
-        provider: data.provider,
-        createdAt: data.created_at,
-        emailConfirmed: data.email_confirmed
-      }
-    } catch (error) {
-      console.error('Error loading user data:', error)
-      throw new Error('Failed to load user data')
-    }
-  }
-
-  private setupAuthListeners(): void {
-    if (!supabase) return
-
-    // Listen for auth state changes
-    const { data: authListener } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          if (session?.user) {
-            await this.handleSignIn(session.user)
-          }
-        } else if (event === 'SIGNED_OUT') {
-          await this.handleSignOut()
-        }
-      }
-    )
-
-    // Store the subscription for cleanup
-    this.authListener = authListener
-  }
-
-  private async handleSignIn(user: any): Promise<void> {
-    try {
-      // Create a session for the user
-      const sessionManager = SessionManager.getInstance()
-      const session = await sessionManager.createSession({
-        user,
-        email: user.email,
-        name: user.user_metadata?.name || user.email.split('@')[0],
-        avatar: user.user_metadata?.avatar_url,
-        provider: user.app_metadata?.provider || 'email'
-      })
-
-      this.currentSession = sessionManager
-      this.authState.session = sessionManager
-      this.authState.user = {
-        id: user.id,
-        email: user.email,
-        name: user.user_metadata?.name || user.email.split('@')[0],
-        avatar: user.user_metadata?.avatar_url,
-        provider: user.app_metadata?.provider || 'email',
-        createdAt: user.created_at,
-        emailConfirmed: user.email_confirmed
-      }
-      this.authState.isAuthenticated = true
-
-      // Store session ID in localStorage
-      localStorage.setItem('pubrooter_session_id', session.id)
-
-      // Load user profile
-      const userData = await this.loadUserData(user.id)
-      this.authState.user = { ...this.authState.user, ...userData }
-    } catch (error) {
-      console.error('Error handling sign in:', error)
-      await this.handleSignOut()
-    }
-  }
-
-  private async handleSignOut(): Promise<void> {
-    try {
-      if (this.currentSession) {
-        await this.currentSession.invalidateSession(this.currentSession.id)
-        this.currentSession = null
-      }
-
-      this.authState.user = null
-      this.authState.session = null
-      this.authState.isAuthenticated = false
-
-      localStorage.removeItem('pubrooter_session_id')
-    } catch (error) {
-      console.error('Error handling sign out:', error)
-    }
-  }
-
-  async signIn(email: string, password: string): Promise<void> {
-    if (!supabase) {
-      throw new Error('Authentication service not configured')
-    }
-
-    try {
-      this.authState.isLoading = true
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      })
-
-      if (error) {
-        throw new Error(error.message)
-      }
-
-      if (data.user) {
-        await this.handleSignIn(data.user)
-      }
-    } finally {
-      this.authState.isLoading = false
-    }
-  }
-
-  async signUp(email: string, password: string, userData: { name: string, avatar?: string }): Promise<void> {
-    if (!supabase) {
-      throw new Error('Authentication service not configured')
-    }
-
-    try {
-      this.authState.isLoading = true
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            name: userData.name,
-            avatar: userData.avatar
-          }
-        }
-      })
-
-      if (error) {
-        throw new Error(error.message)
-      }
-
-      if (data.user) {
-        await this.handleSignIn(data.user)
-      }
-    } finally {
-      this.authState.isLoading = false
-    }
-  }
-
-  async signInWithProvider(provider: 'google' | 'azure'): Promise<void> {
-    if (!supabase) {
-      throw new Error('Authentication service not configured')
-    }
-
-    try {
-      this.authState.isLoading = true
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider,
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback`
-        }
-      })
-
-      if (error) {
-        throw new Error(error.message)
-      }
-    } finally {
-      this.authState.isLoading = false
-    }
-  }
-
-  async signOut(): Promise<void> {
-    try {
-      if (supabase) {
-        await supabase.auth.signOut()
-      }
-
-      await this.handleSignOut()
-    } catch (error) {
-      console.error('Error signing out:', error)
-      throw error
-    }
-  }
-
-  async getCurrentUser(): Promise<User | null> {
-    return this.authState.user
-  }
-
-  async getCurrentSession(): Promise<SessionManager | null> {
-    return this.authState.session
-  }
-
-  isLoading(): boolean {
-    return this.authState.isLoading
-  }
-
-  isAuthenticated(): boolean {
-    return this.authState.isAuthenticated
-  }
-
-  getUserEmail(): string | null {
-    return this.authState.user?.email || null
-  }
-
-  getUserName(): string | null {
-    return this.authState.user?.name || null
-  }
-
-  cleanup(): void {
-    if (this.currentSession) {
-      this.currentSession.cleanupExpiredSessions()
-    }
+// Best-effort storage: guarded so this works in workers / private mode too.
+function remember(key: string, value: string | null): void {
+  try {
+    if (typeof localStorage === 'undefined') return
+    if (value === null) localStorage.removeItem(key)
+    else localStorage.setItem(key, value)
+  } catch {
+    /* storage unavailable */
   }
 }
 
-export default AuthService
-export { SessionManager }
+function recall(key: string): string | null {
+  try {
+    if (typeof localStorage === 'undefined') return null
+    return localStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+/** Remember who is signed in so a later expiry can be recovered. */
+export function setKnownAuthEmail(email: string | null): void {
+  knownEmail = email
+  remember(EMAIL_KEY, email)
+}
+
+/** True when this browser had a live session earlier (cleared on manual sign-out). */
+export function wasSignedIn(): boolean {
+  return recall(SIGNED_IN_KEY) === '1'
+}
+
+export function markSignedIn(email?: string | null): void {
+  remember(SIGNED_IN_KEY, '1')
+  if (email) setKnownAuthEmail(email)
+}
+
+export function markSignedOut(): void {
+  remember(SIGNED_IN_KEY, null)
+}
+
+/* ---------------------------- error classification ---------------------------- */
+
+/** Does this failure mean "the session is gone/expired", as opposed to a
+ *  network, validation, or permissions problem? */
+export function isSessionRelatedError(e: unknown): boolean {
+  const code = (e as { code?: unknown; status?: unknown } | null)?.code
+  const status = (e as { status?: unknown } | null)?.status
+  if (code === 401 || code === '401' || status === 401) return true
+  if (code === 'PGRST301' || code === 'PGRST302') return true
+  const msg = (e instanceof Error ? e.message : String(e ?? '')).toLowerCase()
+  if (!msg) return false
+  return [
+    'jwt expired',
+    'refresh token',
+    'session expired',
+    'session not found',
+    'not signed in',
+    'auth session missing',
+    'no active session',
+    'token has been revoked',
+    'invalid refresh token'
+  ].some((p) => msg.includes(p))
+}
+
+/* --------------------------------- recovery --------------------------------- */
+
+/** Password prompt for a fresh sign-in. Returns null when no prompt-capable
+ *  window exists (workers, tests) or the prompt is cancelled/unavailable. */
+export async function promptForPassword(): Promise<string | null> {
+  try {
+    if (typeof window === 'undefined' || typeof window.prompt !== 'function') return null
+    const pw = window.prompt('Your session needs to be reconfirmed. Enter your password to continue:')
+    return typeof pw === 'string' && pw.length > 0 ? pw : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Attempt to restore a live session without destroying anything:
+ *  1. silent path. GetSession()/getUser() transparently refresh an expired
+ *     access token when the refresh token is still valid;
+ *  2. fresh sign-in - when a prompt-capable window exists, ask for the
+ *     password and sign in again.
+ * Never throws; returns true only when a valid session exists afterwards.
+ * Concurrent callers share one attempt (so an expiry event and a failing
+ * save never stack two password prompts).
+ */
+let reauthInFlight: Promise<boolean> | null = null
+
+export function tryReauth(): Promise<boolean> {
+  if (reauthInFlight) return reauthInFlight
+  reauthInFlight = doReauth().finally(() => {
+    reauthInFlight = null
+  })
+  return reauthInFlight
+}
+
+async function doReauth(): Promise<boolean> {
+  if (!supabase) {
+    authTrace('reauth-skipped', 'no supabase client')
+    return false
+  }
+  try {
+    // 1. Silent refresh of the existing session, if any.
+    const { data: boot } = await supabase.auth.getSession()
+    const email = boot.session?.user.email ?? knownEmail ?? recall(EMAIL_KEY)
+    if (boot.session) {
+      const { data, error } = await supabase.auth.getUser()
+      if (data.user && !error) {
+        authTrace('reauth-recovered', 'silent session refresh')
+        return true
+      }
+      authTrace('reauth-silent-failed', error?.message ?? 'getUser rejected the session')
+    } else {
+      authTrace('reauth-silent-failed', 'no session to refresh')
+    }
+
+    // 2. Fresh sign-in with the known account.
+    if (!email) {
+      authTrace('reauth-failed', 'no known email for a fresh sign-in')
+      return false
+    }
+    const password = await promptForPassword()
+    if (password === null) {
+      authTrace('reauth-failed', 'password prompt unavailable or cancelled')
+      return false
+    }
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error || !data.session) {
+      authTrace('reauth-failed', error?.message ?? 'no session after sign-in')
+      return false
+    }
+    markSignedIn(email)
+    authTrace('reauth-recovered', 'fresh sign-in')
+    return true
+  } catch (e) {
+    authTrace('reauth-error', e instanceof Error ? e.message : String(e))
+    return false
+  }
+}
+
+/**
+ * Classify a persistence/load failure. Session-related errors attempt
+ * recovery first:
+ *   - recovery succeeded → returns null (caller must clear its error state
+ *     and may retry the operation. The session is live again);
+ *   - recovery impossible or failed → returns an actionable message.
+ * Non-session errors pass through unchanged. Never throws.
+ */
+export async function handleAuthError(e: unknown): Promise<string | null> {
+  const msg = e instanceof Error ? e.message : String(e ?? '')
+  if (!isSessionRelatedError(e)) {
+    authTrace('error-pass-through', msg || 'unknown error')
+    return msg || 'Something went wrong. Please try again.'
+  }
+  authTrace('session-error', msg)
+  if (await tryReauth()) {
+    authTrace('recovery-ok', 'error suppressed. Session restored')
+    return null
+  }
+  const actionable = /refresh|revoked/i.test(msg) ? ACTIONABLE_REFRESH : ACTIONABLE_EXPIRED
+  authTrace('recovery-failed', actionable)
+  return actionable
+}

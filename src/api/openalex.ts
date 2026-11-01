@@ -10,14 +10,27 @@ interface OpenAlexSource {
   apc_usd?: number
   works_count?: number
   homepage_url?: string
+  type?: string
   summary_stats?: { '2yr_mean_citedness'?: number | null; '4yr_mean_citedness'?: number | null }
   topics?: { display_name: string }[]
 }
 
 const SOURCE_SELECT =
-  'id,display_name,issn_l,issn,host_organization_name,is_oa,apc_usd,works_count,summary_stats,topics,homepage_url'
+  'id,display_name,issn_l,issn,host_organization_name,is_oa,apc_usd,works_count,summary_stats,topics,homepage_url,type'
+
+/** Only genuine journals. Repositories, preprint servers and conference
+ *  series show up in OpenAlex sources but are not submission venues. */
+function isJournalSource(s: OpenAlexSource): boolean {
+  return s.type === 'journal'
+}
 
 function toCandidate(s: OpenAlexSource): JournalCandidate {
+  // Only keep real journal websites. OpenAlex record pages and non-http
+  // values are provenance, not sites.
+  const home =
+    s.homepage_url && /^https?:\/\//i.test(s.homepage_url) && !/openalex\.org/i.test(s.homepage_url)
+      ? s.homepage_url
+      : undefined
   return {
     id: `openalex:${s.id}`,
     title: s.display_name,
@@ -29,7 +42,7 @@ function toCandidate(s: OpenAlexSource): JournalCandidate {
     worksCount: s.works_count,
     citedness: s.summary_stats?.['2yr_mean_citedness'] ?? undefined,
     citedness4: s.summary_stats?.['4yr_mean_citedness'] ?? undefined,
-    homepageUrl: s.homepage_url,
+    homepageUrl: home,
     source: 'openalex' as const,
     sourceUrl: s.id
   }
@@ -37,7 +50,7 @@ function toCandidate(s: OpenAlexSource): JournalCandidate {
 
 /**
  * Candidate discovery in two legs:
- * 1. Where do papers like this one get published — search works, collect the
+ * 1. Where do papers like this one get published. Search works, collect the
  *    journals those papers appeared in, then fetch the full source records.
  * 2. Journals whose names match the manuscript keywords (supplementary).
  * Throws only when nothing could be retrieved at all.
@@ -71,6 +84,7 @@ export async function searchOpenAlex(title: string, keywords: string[]): Promise
       const sdata = await sres.json()
       for (const s of (sdata.results ?? []) as OpenAlexSource[]) {
         if (seen.has(s.id)) continue
+        if (!isJournalSource(s)) continue
         seen.add(s.id)
         out.push(toCandidate(s))
       }
@@ -83,12 +97,14 @@ export async function searchOpenAlex(title: string, keywords: string[]): Promise
     const kwQuery = keywords.filter(Boolean).join(' ').slice(0, 160) || title.slice(0, 160)
     const url = new URL('https://api.openalex.org/sources')
     url.searchParams.set('search', kwQuery)
+    url.searchParams.set('filter', 'type:journal')
     url.searchParams.set('per_page', '10')
     const res = await fetch(url.toString())
     if (!res.ok) throw new Error(`OpenAlex ${res.status}`)
     const data = await res.json()
     for (const s of (data.results ?? []) as OpenAlexSource[]) {
       if (seen.has(s.id)) continue
+      if (!isJournalSource(s)) continue
       seen.add(s.id)
       out.push(toCandidate(s))
     }

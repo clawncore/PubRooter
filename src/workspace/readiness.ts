@@ -1,24 +1,34 @@
-import type { ExtractedContent, ReadinessAudit, ReadinessCheck, ReadinessCheck as C } from './types'
+import type { AttachedDoc, ExtractedContent, ReadinessAudit, ReadinessCheck, ReadinessCheck as C } from './types'
 import { READINESS_ENGINE_VERSION } from './types'
 import type { JournalCandidate } from '../types'
-import { getJournalRequirements } from './submissions'
+import { getJournalRequirements, requiredSupportingDocs } from './submissions'
 
 function check(id: string, label: string, status: C['status'], explanation: string, extra?: Partial<C>): ReadinessCheck {
   return { id, label, status, explanation, ...extra }
 }
 
 const UNKNOWN_JOURNAL_NOTE =
-  'Journal-specific author instructions are not available from open metadata sources, so this item is Unknown — verify on the journal site.'
+  'Journal-specific author instructions are not available from open metadata sources, so this item is Unknown. Verify on the journal site.'
 
-/** Readiness audit. Only passes what can be verified from the extracted manuscript; journal-side unknowns stay Unknown. */
+/** Readiness audit. Reads the extracted manuscript AND the documents attached in the
+ * journal portal (uploads and "Mark ready" declarations), so statement and figure
+ * checks reflect what the author has actually prepared. Journal-side unknowns stay Unknown. */
 export function runReadiness(
   edited: ExtractedContent,
   journal: JournalCandidate,
-  auditId: string
+  auditId: string,
+  attachedDocs: AttachedDoc[] = [],
+  hasStoredFile = false
 ): ReadinessAudit {
   const checks: ReadinessCheck[] = []
   const src = journal.homepageUrl
   const abstractWords = edited.abstract.split(/\s+/).filter(Boolean).length
+  const hasDoc = (docId: string) => attachedDocs.some((d) => d.docId === docId)
+  const docNote = (docId: string) => {
+    const d = attachedDocs.find((x) => x.docId === docId)
+    if (!d) return ''
+    return d.source === 'stored' ? ' Marked ready in the journal portal.' : ` Attached in the journal portal (${d.name}).`
+  }
 
   checks.push(
     edited.title.trim().length > 0
@@ -27,11 +37,11 @@ export function runReadiness(
   )
 
   if (abstractWords === 0) {
-    checks.push(check('abstract', 'Abstract present', 'attention', 'No abstract detected — required by nearly all journals.'))
+    checks.push(check('abstract', 'Abstract present', 'attention', 'No abstract detected. Required by nearly all journals.'))
   } else if (abstractWords < 50) {
-    checks.push(check('abstract', 'Abstract length', 'attention', `Abstract is only ${abstractWords} words — most journals expect 150–300 words. Verify the journal limit.`, { sourceUrl: src }))
+    checks.push(check('abstract', 'Abstract length', 'attention', `Abstract is only ${abstractWords} words. Most journals expect 150–300 words. Verify the journal limit.`, { sourceUrl: src }))
   } else if (abstractWords > 350) {
-    checks.push(check('abstract', 'Abstract length', 'attention', `Abstract is ${abstractWords} words — some journals cap at 250–300. Verify the journal limit.`, { sourceUrl: src }))
+    checks.push(check('abstract', 'Abstract length', 'attention', `Abstract is ${abstractWords} words. Some journals cap at 250–300. Verify the journal limit.`, { sourceUrl: src }))
   } else {
     checks.push(check('abstract', 'Abstract length', 'pass', `Abstract is ${abstractWords} words, within the common 150–350 range. Confirm the exact limit.`, { sourceUrl: src }))
   }
@@ -40,7 +50,7 @@ export function runReadiness(
     edited.keywords.length >= 3
       ? check('keywords', 'Keywords provided', 'pass', `${edited.keywords.length} keywords detected.`, { evidence: edited.keywords.slice(0, 8).join(', ') })
       : edited.keywords.length > 0
-        ? check('keywords', 'Keywords provided', 'attention', `Only ${edited.keywords.length} keyword(s) found — most journals ask for 4–8.`)
+        ? check('keywords', 'Keywords provided', 'attention', `Only ${edited.keywords.length} keyword(s) found. Most journals ask for 4–8.`)
         : check('keywords', 'Keywords provided', 'attention', 'No keywords detected. Add a keyword list in the manuscript metadata.')
   )
 
@@ -58,7 +68,7 @@ export function runReadiness(
   checks.push(
     hasMethods
       ? check('methods', 'Methods section', 'pass', 'A methods section appears present.')
-      : check('methods', 'Methods section', 'unknown', 'No methods section detected — may be labelled differently or missing.')
+      : check('methods', 'Methods section', 'unknown', 'No methods section detected. May be labelled differently or missing.')
   )
 
   checks.push(
@@ -71,27 +81,35 @@ export function runReadiness(
   checks.push(
     /\b(funding|grant|financed by|supported by)\b/.test(lower)
       ? check('funding', 'Funding statement', 'pass', 'Funding language found in the manuscript.')
-      : check('funding', 'Funding statement', 'attention', 'No funding statement detected — most journals require one (including "no funding received").', { sourceUrl: src })
+      : hasDoc('funding_statement')
+      ? check('funding', 'Funding statement', 'pass', `Funding statement prepared.${docNote('funding_statement')}`)
+      : check('funding', 'Funding statement', 'attention', 'No funding statement detected or attached. Most journals require one (including "no funding received"). Upload or mark it ready in the journal portal.', { sourceUrl: src })
   )
 
   checks.push(
     /\b(conflict of interest|competing interest|disclosure)\b/.test(lower)
       ? check('coi', 'Conflict-of-interest declaration', 'pass', 'COI/competing-interest language found.')
-      : check('coi', 'Conflict-of-interest declaration', 'attention', 'No conflict-of-interest declaration detected — usually required.', { sourceUrl: src })
+      : hasDoc('coi_statement')
+      ? check('coi', 'Conflict-of-interest declaration', 'pass', `COI declaration prepared.${docNote('coi_statement')}`)
+      : check('coi', 'Conflict-of-interest declaration', 'attention', 'No conflict-of-interest declaration detected or attached. Upload or mark it ready in the journal portal.', { sourceUrl: src })
   )
 
   checks.push(
     /\b(ethics (approval|committee)|irb|institutional review|consent)\b/.test(lower)
       ? check('ethics', 'Ethics / consent statement', 'pass', 'Ethics or consent language found.')
-        : /\b(patients?|participants?|human subjects?|animal models?|surveys?)\b/.test(lower)
-        ? check('ethics', 'Ethics / consent statement', 'warning', 'Human/animal subject language detected without an ethics statement — many journals require approval details.', { sourceUrl: src })
+      : hasDoc('ethics_statement')
+      ? check('ethics', 'Ethics / consent statement', 'pass', `Ethics statement prepared.${docNote('ethics_statement')}`)
+      : /\b(patients?|participants?|human subjects?|animal models?|surveys?)\b/.test(lower)
+        ? check('ethics', 'Ethics / consent statement', 'warning', 'Human/animal subject language detected without an ethics statement. Many journals require approval details. Upload or mark it ready in the journal portal.', { sourceUrl: src })
         : check('ethics', 'Ethics / consent statement', 'unknown', 'No ethics-related language detected; may not apply to this study type.')
   )
 
   checks.push(
     /\b(data availability|data will be shared|data are available|dataset available)\b/.test(lower)
       ? check('data', 'Data availability statement', 'pass', 'Data availability language found.')
-      : check('data', 'Data availability statement', 'attention', 'No data availability statement detected — increasingly required by journals and funders.', { sourceUrl: src })
+      : hasDoc('data_availability')
+      ? check('data', 'Data availability statement', 'pass', `Data availability statement prepared.${docNote('data_availability')}`)
+      : check('data', 'Data availability statement', 'attention', 'No data availability statement detected or attached. Upload or mark it ready in the journal portal.', { sourceUrl: src })
   )
 
   // Resolve journal-specific requirements where they can be verified
@@ -106,20 +124,42 @@ export function runReadiness(
         : 'unknown',
       reqs.wordLimitMainText
         ? `Manuscript is ${edited.wordCount.toLocaleString()} words. Journal limit: ${reqs.wordLimitMainText.toLocaleString()} words.` +
-          (edited.wordCount > reqs.wordLimitMainText ? ' Exceeds the limit — trim or verify with the journal.' : ' Within the limit.')
+          (edited.wordCount > reqs.wordLimitMainText ? ' Exceeds the limit. Trim or verify with the journal.' : ' Within the limit.')
         : `${edited.wordCount.toLocaleString()} words extracted. ${UNKNOWN_JOURNAL_NOTE}`,
       { sourceUrl: reqs.sourceUrl, evidence: reqs.source }
     )
   )
 
   checks.push(
-    check('figures', 'Figure and table requirements',
-      reqs.acceptsSeparateImageFiles || reqs.acceptsSeparateTableFiles ? 'attention' : 'unknown',
-      reqs.source === 'known'
-        ? `Journal${reqs.acceptsSeparateImageFiles ? ' accepts' : ' does not accept'} separate image files,${reqs.acceptsSeparateTableFiles ? ' accepts' : ' does not accept'} separate table files. Review extraction against these rules.`
-        : UNKNOWN_JOURNAL_NOTE,
-      { sourceUrl: reqs.sourceUrl, evidence: reqs.source }
-    )
+    hasDoc('figures_supplementary')
+      ? check('figures', 'Figure and table requirements', 'pass',
+          `Figure/supplementary files attached in the journal portal.${docNote('figures_supplementary')}` +
+          (reqs.acceptsSeparateImageFiles || reqs.acceptsSeparateTableFiles
+            ? ` Journal ${reqs.acceptsSeparateImageFiles ? 'accepts' : 'does not accept'} separate image files, ${reqs.acceptsSeparateTableFiles ? 'accepts' : 'does not accept'} separate table files.`
+            : ''),
+          { sourceUrl: reqs.sourceUrl, evidence: reqs.source })
+      : check('figures', 'Figure and table requirements',
+          reqs.acceptsSeparateImageFiles || reqs.acceptsSeparateTableFiles ? 'attention' : 'unknown',
+          reqs.source === 'known'
+            ? `Journal${reqs.acceptsSeparateImageFiles ? ' accepts' : ' does not accept'} separate image files,${reqs.acceptsSeparateTableFiles ? ' accepts' : ' does not accept'} separate table files. Attach figures in the journal portal, or review extraction against these rules.`
+            : UNKNOWN_JOURNAL_NOTE,
+          { sourceUrl: reqs.sourceUrl, evidence: reqs.source })
+  )
+
+  // Submission documents: required docs from the journal portal, linked to this audit.
+  const requiredDocs = requiredSupportingDocs(reqs)
+  const docStates = requiredDocs.map((d) => ({ ...d, present: hasDoc(d.id) }))
+  const presentCount = docStates.filter((d) => d.present).length
+  const missingLabels = docStates.filter((d) => !d.present).map((d) => d.label)
+  const totalWithManuscript = requiredDocs.length + 1
+  const presentWithManuscript = presentCount + (hasStoredFile || hasDoc('manuscript') ? 1 : 0)
+  checks.push(
+    check('documents', 'Submission documents',
+      missingLabels.length === 0 ? 'pass' : 'attention',
+      missingLabels.length === 0
+        ? `All ${totalWithManuscript} required documents are ready (${presentWithManuscript} of ${totalWithManuscript} counted, including the manuscript).`
+        : `${presentWithManuscript} of ${totalWithManuscript} required documents ready. Still needed: ${missingLabels.join(', ')}. Upload or mark them ready in the journal portal.`,
+      { sourceUrl: reqs.sourceUrl, evidence: reqs.source })
   )
 
   const refStyleKnown =
@@ -138,7 +178,7 @@ export function runReadiness(
     check('files', 'File-format requirements',
       reqs.source === 'known' && (reqs.figureFormat.length > 0 || reqs.tableFormat.length > 0) ? 'attention' : 'unknown',
       reqs.source === 'known'
-        ? `Accepted formats — figures: ${reqs.figureFormat.join(', ') || 'verify'}; tables: ${reqs.tableFormat.join(', ') || 'verify'}; supplementary: ${reqs.supplementaryFormat.join(', ') || 'verify'}.`
+        ? `Accepted formats. Figures: ${reqs.figureFormat.join(', ') || 'verify'}; tables: ${reqs.tableFormat.join(', ') || 'verify'}; supplementary: ${reqs.supplementaryFormat.join(', ') || 'verify'}.`
         : UNKNOWN_JOURNAL_NOTE,
       { sourceUrl: reqs.sourceUrl, evidence: reqs.source }
     )
@@ -146,7 +186,7 @@ export function runReadiness(
   checks.push(
     check('apc', 'Publication charges', journal.apcUsd != null ? 'attention' : 'unknown',
       journal.apcUsd != null
-        ? `Open metadata lists an APC near US$${journal.apcUsd.toLocaleString()} — confirm current fees and any institutional agreement on the journal site.`
+        ? `Open metadata lists an APC near US$${journal.apcUsd.toLocaleString()}. Confirm current fees and any institutional agreement on the journal site.`
         : UNKNOWN_JOURNAL_NOTE,
       { sourceUrl: src })
   )

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { Draft, View } from '../App'
+import type { Draft, View } from '../types-nav'
 
 interface Props {
   onNavigate: (v: View, d?: Draft) => void
@@ -9,8 +9,42 @@ const TYPE_PHRASES = [
   'Empowering research with evidence-backed journal discovery',
   'Match your paper to journals that actually fit',
   'Turn desk rejections into a better-matched shortlist',
-  'From manuscript to published — with the evidence shown'
+  'From manuscript to published, with the evidence shown'
 ]
+
+interface TickerJournal {
+  slug: string
+  file: string
+  name: string
+  short: string
+}
+
+const TICKER: TickerJournal[] = [
+  { slug: 'pnas', file: 'pnas.png', name: 'PNAS', short: 'PN' },
+  { slug: 'bmj', file: 'bmj.png', name: 'BMJ', short: 'BMJ' },
+  { slug: 'cell', file: 'cell.png', name: 'Cell', short: 'C' },
+  { slug: 'jama', file: 'jama.png', name: 'JAMA', short: 'J' },
+  { slug: 'plos-one', file: 'plos-one.png', name: 'PLOS ONE', short: 'PO' },
+  { slug: 'sci-reports', file: 'sci-reports.png', name: 'Scientific Reports', short: 'SR' },
+  { slug: 'nature-comms', file: 'nature-comms.png', name: 'Nature Communications', short: 'NC' },
+  { slug: 'ieee-access', file: 'ieee-access.jpg', name: 'IEEE Access', short: 'IA' },
+  { slug: 'elife', file: 'elife.png', name: 'eLife', short: 'eL' },
+  { slug: 'neuron', file: 'neuron.png', name: 'Neuron', short: 'N' }
+]
+
+function TickerItem({ j }: { j: TickerJournal }) {
+  const [imgOk, setImgOk] = useState(true)
+  return (
+    <span className="lp-ticker-item">
+      {imgOk ? (
+        <img className="lp-ticker-logo" src={`/journals/${j.file}`} alt="" onError={() => setImgOk(false)} />
+      ) : (
+        <span className="lp-ticker-fallback" aria-hidden="true">{j.short}</span>
+      )}
+      <span className="lp-ticker-name">{j.name}</span>
+    </span>
+  )
+}
 
 function useTypewriter(phrases: readonly string[]) {
   const [index, setIndex] = useState(0)
@@ -92,7 +126,7 @@ const WHY = [
     tint: 'blue',
     icon: 'search',
     title: 'Increase submission efficiency',
-    body: 'Abstract matching, saved projects, and readiness checklists — less guesswork, faster shortlists.'
+    body: 'Abstract matching, saved projects, and readiness checklists. Less guesswork, faster shortlists.'
   },
   {
     tint: 'orange',
@@ -116,7 +150,7 @@ const WHY = [
     tint: 'purple',
     icon: 'check',
     title: 'Requirements you can trust',
-    body: 'Unverified checklist items stay unknown — never silently marked complete.'
+    body: 'Unverified checklist items stay unknown. Never silently marked complete.'
   }
 ]
 
@@ -155,7 +189,7 @@ const NEWS = [
   {
     tint: 'orange',
     title: 'Evidence-first matching is live',
-    body: 'Weights, rationale, and limitations on every journal card — built for defensible shortlists.',
+    body: 'Weights, rationale, and limitations on every journal card. Built for defensible shortlists.',
     cta: 'Try the finder'
   },
   {
@@ -167,7 +201,7 @@ const NEWS = [
   {
     tint: 'green',
     title: 'Checklists keep unknowns explicit',
-    body: 'Requirements you have not verified stay marked unknown — never assumed met.',
+    body: 'Requirements you have not verified stay marked unknown. Never assumed met.',
     cta: 'Open workspace'
   }
 ]
@@ -278,7 +312,7 @@ export function Home({ onNavigate }: Props) {
   return (
     <div className="lp">
       <main id="main">
-        {/* Hero — product mock, not stock photo */}
+        {/* Hero. Product mock, not stock photo */}
         <section className="lp-hero">
           <div className="lp-hero-glow" aria-hidden="true" />
           <div className="lp-container lp-hero-inner home-hero">
@@ -295,7 +329,7 @@ export function Home({ onNavigate }: Props) {
               </h1>
               <p className="lp-lede">
                 Move from manuscript to a defensible shortlist. PubRooter matches your abstract against live scholarly
-                indexes and shows the evidence — provenance, weights, and limitations — for every recommendation. It
+                indexes and shows the evidence. Provenance, weights, and limitations - for every recommendation. It
                 also handles rejection-and-resubmission loops and submission readiness, until your work is published.
               </p>
               <div className="lp-hero-actions">
@@ -319,9 +353,9 @@ export function Home({ onNavigate }: Props) {
                   <span>ISSN listed</span>
                 </div>
                 <div className="home-mock-rows">
-                  <div className="home-mock-row"><b>Topic overlap</b> — clinical, NLP, trial matching</div>
-                  <div className="home-mock-row"><b>Activity</b> — high works volume indexed</div>
-                  <div className="home-mock-row muted-row"><b>Limitation</b> — verify aims &amp; scope on site</div>
+                  <div className="home-mock-row"><b>Topic overlap</b>. Clinical, NLP, trial matching</div>
+                  <div className="home-mock-row"><b>Activity</b>. High works volume indexed</div>
+                  <div className="home-mock-row muted-row"><b>Limitation</b>. Verify aims &amp; scope on site</div>
                 </div>
               </div>
               <div className="home-mock-card home-mock-side">
@@ -336,13 +370,26 @@ export function Home({ onNavigate }: Props) {
               </div>
             </div>
           </div>
+          <div className="lp-ticker">
+            <div className="lp-container">
+              <span className="lp-ticker-label">Journals you can match against, including</span>
+            </div>
+            <div className="lp-ticker-viewport" aria-hidden="true">
+              <div className="lp-ticker-track">
+                {[...TICKER, ...TICKER].map((j, i) => (
+                  <TickerItem key={`${j.slug}-${i}`} j={j} />
+                ))}
+              </div>
+            </div>
+            <p className="lp-sr-only">{TICKER.map((j) => j.name).join(', ')}</p>
+          </div>
         </section>
 
         {/* Explore cards */}
         <section className="lp-section">
           <div className="lp-container">
             <h2 className="lp-h2">Explore PubRooter</h2>
-            <p className="lp-body">Three focused tools — the same ones research teams use every submission cycle.</p>
+            <p className="lp-body">Three focused tools. The same ones research teams use every submission cycle.</p>
             <div className="home-explore">
               {EXPLORE.map((card) => (
                 <button
@@ -378,7 +425,7 @@ export function Home({ onNavigate }: Props) {
           </div>
         </section>
 
-        {/* Why — icon cards */}
+        {/* Why. Icon cards */}
         <section className="lp-section lp-section-alt">
           <div className="lp-container">
             <h2 className="lp-h2">Why PubRooter?</h2>
@@ -396,11 +443,11 @@ export function Home({ onNavigate }: Props) {
           </div>
         </section>
 
-        {/* Photo mosaic — small cards, not one giant image */}
+        {/* Photo mosaic. Small cards, not one giant image */}
         <section className="lp-section">
           <div className="lp-container">
             <h2 className="lp-h2">Designed for everyone in the publication loop</h2>
-            <p className="lp-body">From solo authors to institutional research offices — one evidence-first workflow.</p>
+            <p className="lp-body">From solo authors to institutional research offices. One evidence-first workflow.</p>
             <div className="home-mosaic">
               {MOSAIC.map((m) => (
                 <figure key={m.caption} className="home-mosaic-card">

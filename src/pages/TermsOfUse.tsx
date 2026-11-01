@@ -74,7 +74,7 @@ export function TermsOfUse({ onBack, onPrivacy }: Props) {
             <li>Attempt to probe, scan, or disrupt the Service or bypass security controls</li>
             <li>Scrape the Service at scale or resell match results as a competing database product</li>
             <li>Upload content you do not have the right to process (for example, confidential third-party manuscripts without authorisation)</li>
-            <li>Misrepresent PubRooter endorsements — we do not endorse journals</li>
+            <li>Misrepresent PubRooter endorsements. We do not endorse journals</li>
           </ul>
         </section>
 

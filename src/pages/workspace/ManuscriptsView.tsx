@@ -43,8 +43,8 @@ export function ManuscriptsView({ go }: { go: (v: WorkspaceView) => void }) {
         <div className="ws-card ws-empty">
           <strong>No manuscripts yet</strong>
           {mode === 'cloud'
-            ? 'Start with a PDF upload. Files are stored in your private storage bucket — readable only by your account.'
-            : 'Start with a PDF upload. Files are stored privately in this browser and never sent anywhere — there are none.'}
+            ? 'Start with a PDF upload. Files are stored in your private storage bucket. Readable only by your account.'
+            : 'Start with a PDF upload. Files are stored privately in this browser and never sent anywhere. There are none.'}
         </div>
       ) : (
         <div className="ws-card" style={{ padding: '0 1.25rem' }}>
@@ -73,7 +73,7 @@ export function ManuscriptsView({ go }: { go: (v: WorkspaceView) => void }) {
                       </div>
                     )}
                   </td>
-                  <td style={{ fontSize: 12, color: '#666' }}>{p.fileName ?? '—'}</td>
+                  <td style={{ fontSize: 12, color: '#666' }}>{p.fileName ?? 'N/A'}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>{fmt(p.updatedAt)}</td>
                   <td>
                     <span

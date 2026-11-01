@@ -1,7 +1,7 @@
 import { DragEvent, FormEvent, useRef, useState } from 'react'
 import { useWorkspace } from '../../workspace/WorkspaceContext'
 import { storeFile } from '../../workspace/storage'
-import { extractFromPdf, formatBytes, validatePdfFile, validatePdfMagic, MAX_UPLOAD_BYTES } from '../../workspace/pdf'
+import { extractFromPdf, extractFromDocx, formatBytes, validatePdfFile, validatePdfMagic, MAX_UPLOAD_BYTES } from '../../workspace/pdf'
 import { runAnalysis } from '../../workspace/pipeline'
 import { uid } from '../../lib/storage'
 import { DEFAULT_PREFERENCES, emptyExtracted, type ExtractedContent, type ManuscriptProject, type ResearchPreferences } from '../../workspace/types'
@@ -60,15 +60,18 @@ export function NewManuscript({ go }: { go: (v: WorkspaceView) => void }) {
   async function handleFile(f: File | null | undefined) {
     if (!f || !data) return
     setUploadError('')
-    const basic = validatePdfFile(f)
-    if (!basic.ok) {
-      setUploadError(basic.error!)
-      return
-    }
-    const magic = await validatePdfMagic(f)
-    if (!magic.ok) {
-      setUploadError(magic.error!)
-      return
+    const isDocx = /\.(docx?|doc)$/i.test(f.name)
+    if (!isDocx) {
+      const basic = validatePdfFile(f)
+      if (!basic.ok) {
+        setUploadError(basic.error!)
+        return
+      }
+      const magic = await validatePdfMagic(f)
+      if (!magic.ok) {
+        setUploadError(magic.error!)
+        return
+      }
     }
 
     setFile(f)
@@ -91,7 +94,7 @@ export function NewManuscript({ go }: { go: (v: WorkspaceView) => void }) {
     if (!readOk) return
     {
       const id = uid()
-      setPhaseNote('Extracting text from PDF…')
+      setPhaseNote(isDocx ? 'Extracting text from Word document…' : 'Extracting text from PDF…')
       let stored = true
       try {
         await storeFile(id, f)
@@ -100,14 +103,14 @@ export function NewManuscript({ go }: { go: (v: WorkspaceView) => void }) {
       }
       let content: ExtractedContent | null = null
       try {
-        content = await extractFromPdf(f)
+        content = isDocx ? await extractFromDocx(f) : await extractFromPdf(f)
       } catch (e) {
         setExtractionError(e instanceof Error ? e.message : 'Text extraction failed. You can still enter details manually.')
         content = emptyExtracted()
-        content.extractionWarnings.push('Automated extraction failed — enter the manuscript details manually.')
+        content.extractionWarnings.push('Automated extraction failed. Enter the manuscript details manually.')
       }
       if (!stored) {
-        content.extractionWarnings.push('The PDF file itself could not be stored — analysis will still run from the extracted text, but the original file will not be available for download.')
+        content.extractionWarnings.push('The PDF file itself could not be stored. Analysis will still run from the extracted text, but the original file will not be available for download.')
       }
       setProjectId(id)
       setExtracted(content)
@@ -150,8 +153,8 @@ export function NewManuscript({ go }: { go: (v: WorkspaceView) => void }) {
         ...ws,
         projects: ws.projects.map((p) => (p.id === projectId ? result : p))
       }))
-      log('analysis', `Analysis completed for "${result.name}" — ${result.analysis?.matches.length ?? 0} recommendations.`, projectId)
-      go({ name: 'project', id: projectId })
+      log('analysis', `Analysis completed for "${result.name}": ${result.analysis?.matches.length ?? 0} recommendations.`, projectId)
+      go({ name: 'readiness', id: projectId })
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Analysis failed'
       await update((ws) => ({
@@ -203,14 +206,14 @@ export function NewManuscript({ go }: { go: (v: WorkspaceView) => void }) {
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') inputRef.current?.click()
             }}
-            aria-label="Upload manuscript PDF"
+            aria-label="Upload manuscript"
           >
-            <strong>Drop your manuscript PDF here</strong>
-            <p>or click to choose a file — PDF only, up to {formatBytes(MAX_UPLOAD_BYTES)}</p>
+            <strong>Drop your manuscript here</strong>
+            <p>or click to choose a file: PDF, DOC, DOCX up to {formatBytes(MAX_UPLOAD_BYTES)}</p>
             <input
               ref={inputRef}
               type="file"
-              accept="application/pdf,.pdf"
+              accept="application/pdf,.pdf,.doc,.docx,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
               hidden
               onChange={(e) => void handleFile(e.target.files?.[0])}
             />
@@ -236,7 +239,7 @@ export function NewManuscript({ go }: { go: (v: WorkspaceView) => void }) {
           <p className="ws-hint" style={{ marginTop: '1rem' }}>
             Files are stored privately (in this browser, or in your Colabwize storage bucket when cloud mode is on) for the current workspace and are only readable by
             you. Nothing is uploaded to a server. Valid PDFs are verified by their actual header bytes, not just the
-            filename. Scanned or image-only PDFs cannot be read — you will be able to type the details manually.
+            filename. Scanned or image-only PDFs cannot be read. You will be able to type the details manually.
           </p>
         </>
       )}
@@ -315,7 +318,7 @@ export function NewManuscript({ go }: { go: (v: WorkspaceView) => void }) {
           {step === 'constraints' && prefs && (
             <div className="ws-card">
               <h2 className="ws-h2" style={{ marginTop: 0 }}>
-                Research constraints <span style={{ fontWeight: 400, fontSize: 12, color: '#666' }}>optional — these are preferences, not verified facts</span>
+                Research constraints <span style={{ fontWeight: 400, fontSize: 12, color: '#666' }}>optional. These are preferences, not verified facts</span>
               </h2>
 
               <div className="ws-grid-2">
@@ -362,7 +365,7 @@ export function NewManuscript({ go }: { go: (v: WorkspaceView) => void }) {
                 />
                 <span className="ws-hint">
                   Stored as your requirement. Verification against indexing databases is not available from open
-                  metadata — treat as a to-confirm list.
+                  metadata. Treat as a to-confirm list.
                 </span>
               </label>
 

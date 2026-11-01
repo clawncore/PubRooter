@@ -69,7 +69,10 @@ export async function searchSources(q: SourceQuery, page = 1): Promise<{ rows: S
     isOpenAccess: !!s.is_oa,
     worksCount: s.works_count ?? 0,
     citedness: s.summary_stats?.['2yr_mean_citedness'] ?? undefined,
-    homepageUrl: s.homepage_url,
+    homepageUrl:
+      s.homepage_url && /^https?:\/\//i.test(s.homepage_url) && !/openalex\.org/i.test(s.homepage_url)
+        ? s.homepage_url
+        : undefined,
     hostOrg: s.host_organization_name
   }))
 

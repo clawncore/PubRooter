@@ -52,7 +52,7 @@ export function Sources() {
           <p className="lp-eyebrow">Sources catalog</p>
           <h1 className="lp-h2">Browse journals &amp; sources</h1>
           <p className="lp-body sources-lede">
-            Search journal sources indexed in OpenAlex — by title, publisher, or ISSN — and refine with open-access and
+            Search journal sources indexed in OpenAlex. By title, publisher, or ISSN - and refine with open-access and
             activity filters. Comparable in layout to Scopus Sources; data and metrics are OpenAlex's, labeled as such.
             The provenance of every figure is explained at the bottom of this page.
           </p>
@@ -136,7 +136,7 @@ export function Sources() {
                 <a href="https://openalex.org" target="_blank" rel="noreferrer">
                   OpenAlex
                 </a>{' '}
-                public API — not Scopus. Figures update as OpenAlex updates. Full answers on sources, and on what runs in
+                public API. Not Scopus. Figures update as OpenAlex updates. Full answers on sources, and on what runs in
                 the frontend vs. a backend, are at the bottom of this page.
               </p>
             </section>
@@ -150,7 +150,7 @@ export function Sources() {
             <header className="sources-results-head">
               <h2>
                 {total === null ? 'Results' : `${total.toLocaleString()} results`}
-                {loading && <span className="sources-loading"> — loading…</span>}
+                {loading && <span className="sources-loading">. Loading…</span>}
               </h2>
               <p className="sources-note">Sorted by works indexed (desc). OpenAlex monthly coverage.</p>
             </header>
@@ -196,9 +196,9 @@ export function Sources() {
                             </div>
                           </div>
                         </td>
-                        <td>{r.publisher ?? '—'}</td>
-                        <td className="sources-mono">{r.issn ?? '—'}</td>
-                        <td>{typeof r.citedness === 'number' ? r.citedness.toFixed(2) : '—'}</td>
+                        <td>{r.publisher ?? 'N/A'}</td>
+                        <td className="sources-mono">{r.issn ?? 'N/A'}</td>
+                        <td>{typeof r.citedness === 'number' ? r.citedness.toFixed(2) : 'N/A'}</td>
                         <td>{r.worksCount.toLocaleString()}</td>
                         <td>
                           {r.isOpenAccess ? (
@@ -216,7 +216,7 @@ export function Sources() {
 
             <p className="sources-footnote">
               Only the first page is shown in this preview. Quartile and CiteScore filters require Scopus data and are
-              not reproduced here — we will not invent proprietary metrics.
+              not reproduced here. We will not invent proprietary metrics.
             </p>
           </section>
         </div>
@@ -224,18 +224,18 @@ export function Sources() {
         <section className="lp-container sources-qa" aria-labelledby="sources-qa-title">
           <p className="lp-eyebrow">Provenance, in full</p>
           <h2 id="sources-qa-title" className="lp-h2">
-            Where this journal data comes from — and where it does not
+            Where this journal data comes from. And where it does not
           </h2>
 
           <div className="sources-qa-grid">
             <article className="sources-qa-item">
               <h3>What are the journal sources?</h3>
               <p>
-                The catalog above is <strong>OpenAlex</strong> — a free, open scholarly index — queried live and
+                The catalog above is <strong>OpenAlex</strong>. A free, open scholarly index - queried live and
                 restricted to journals (<code>type:journal</code>). Publisher names and homepages in the journal finder
                 are enriched from <strong>Crossref</strong>, another open DOI registry. PubRooter does{' '}
-                <strong>not</strong> use Scopus, Web of Science, or any licensed/proprietary index — we have no access
-                to them. That is why quartiles, CiteScore, SJR and decision times are shown as “—”: they are not ours
+                <strong>not</strong> use Scopus, Web of Science, or any licensed/proprietary index. We have no access
+                to them. That is why quartiles, CiteScore, SJR and decision times are shown as “N/A”: they are not ours
                 to display, and we will not fabricate them.
               </p>
             </article>
@@ -243,11 +243,11 @@ export function Sources() {
             <article className="sources-qa-item">
               <h3>Are the journals hardwired in the frontend, or served from a backend?</h3>
               <p>
-                <strong>Neither — PubRooter has no backend at all.</strong> Every search you run above executes in{' '}
+                <strong>Neither: PubRooter has no backend at all.</strong> Every search you run above executes in{' '}
                 <em>your browser</em>: the page issues a direct HTTPS request to{' '}
                 <code>https://api.openalex.org/sources</code> and renders the JSON that comes back. No journal rows are
-                hardcoded, cached on a server, or stored by us. What <em>is</em> fixed — in frontend source code you can
-                inspect under <code>src/</code> — is the <em>logic</em>: ranking rules (<code>pubrooter-rank-v1</code>),
+                hardcoded, cached on a server, or stored by us. What <em>is</em> fixed. In frontend source code you can
+                inspect under <code>src/</code> - is the <em>logic</em>: ranking rules (<code>pubrooter-rank-v1</code>),
                 fit-tier thresholds, readiness rules, and this interface. Data is fetched; rules are coded. Never the
                 other way around.
               </p>
@@ -258,16 +258,16 @@ export function Sources() {
               <p>
                 Live from the public APIs at the moment you query:{' '}
                 <code>api.openalex.org</code> for titles, ISSNs, publishers, open-access flags, works counts and 2-year
-                mean citedness (a citedness proxy — not an impact factor); <code>api.crossref.org</code> for DOI and
+                mean citedness (a citedness proxy. Not an impact factor); <code>api.crossref.org</code> for DOI and
                 publisher metadata. OpenAlex refreshes monthly, so figures reflect the last OpenAlex snapshot and are
                 labeled with the source and retrieval date. Because there is no PubRooter server, these queries pass
-                through no system of ours — they go from your browser to the provider directly.
+                through no system of ours - they go from your browser to the provider directly.
               </p>
             </article>
           </div>
 
           <p className="sources-qa-foot">
-            If a figure is not shown, we do not have it. PubRooter displays “—” rather than estimating proprietary
+            If a figure is not shown, we do not have it. PubRooter displays “N/A” rather than estimating proprietary
             metrics, never claims indexing that metadata presence cannot prove, and never presents a relevance score as
             an acceptance probability.
           </p>

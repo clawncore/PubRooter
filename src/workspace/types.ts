@@ -3,7 +3,7 @@ import type { SubmissionAttempt, SubmissionStatus } from './submissions'
 import { uid } from '../lib/storage'
 
 export const WORKSPACE_VERSION = 1
-export const READINESS_ENGINE_VERSION = 'pubrooter-readiness-v1'
+export const READINESS_ENGINE_VERSION = 'pubrooter-readiness-v2'
 export const RANKING_ENGINE_VERSION = 'pubrooter-rank-v1'
 
 export type AnalysisStatus =
@@ -92,6 +92,44 @@ export interface ManuscriptProject {
   comparedJournalIds: string[]
   actionsCompleted: string[]
   submissions: SubmissionAttempt[]
+  /** Supporting documents attached to the project (reused across journals). */
+  attachedDocs?: AttachedDoc[]
+  /** Prepared submission packages, keyed by journal id. */
+  journalPackages?: Record<string, SubmissionPackage>
+}
+
+/** A supporting document attached to the project (upload or generated extra). */
+export interface AttachedDoc {
+  docId: string
+  name: string
+  size: number
+  type: string
+  storedAt: string
+  source?: 'upload' | 'stored' | 'extracted'
+}
+
+export type PackageCheckStatus = 'pass' | 'warn' | 'fail' | 'unknown'
+
+/** One validation result from the final prepare-time document check. */
+export interface PackageCheck {
+  id: string
+  label: string
+  status: PackageCheckStatus
+  detail: string
+}
+
+/** A prepared, journal-validated submission package. */
+export interface SubmissionPackage {
+  journalId: string
+  journalTitle: string
+  citationStyle: string
+  docs: AttachedDoc[]
+  extras: AttachedDoc[]
+  preparedAt: string
+  /** Final document checks run at prepare time. */
+  checks?: PackageCheck[]
+  /** Readiness audit summary captured at prepare time. */
+  readiness?: { pass: number; attention: number; warning: number; unknown: number; runAt: string }
 }
 
 export interface ActivityEvent {

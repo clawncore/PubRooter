@@ -66,7 +66,7 @@ export function deriveMetadata(fullText: string, pageCount: number): ExtractedCo
 
   if (text.replace(/\s/g, '').length < 150) {
     out.extractionWarnings.push(
-      'Very little extractable text was found. This PDF may be scanned or image-based — provide a text-based PDF or enter details manually.'
+      'Very little extractable text was found. This PDF may be scanned or image-based. Provide a text-based PDF or enter details manually.'
     )
     return out
   }
@@ -80,7 +80,7 @@ export function deriveMetadata(fullText: string, pageCount: number): ExtractedCo
     const generic = text.match(/(?:^|\n)([^\n]{200,}\n[^\n]{200,}[^\n]{200,})/)
     if (generic) {
       out.abstract = generic[1]!.replace(/\s+/g, ' ').trim()
-      out.extractionWarnings.push('Abstract section not clearly labelled — review the extracted text carefully.')
+      out.extractionWarnings.push('Abstract section not clearly labelled. Review the extracted text carefully.')
     }
   }
 
@@ -137,10 +137,10 @@ export function deriveMetadata(fullText: string, pageCount: number): ExtractedCo
   }
 
   if (out.sections.length === 0) {
-    out.extractionWarnings.push('Could not identify standard manuscript sections — verify structure manually.')
+    out.extractionWarnings.push('Could not identify standard manuscript sections. Verify structure manually.')
   }
   if (!out.abstract) {
-    out.extractionWarnings.push('No abstract detected — paste it in the review step before analysis.')
+    out.extractionWarnings.push('No abstract detected. Paste it in the review step before analysis.')
   }
 
   const capWords = (out.abstract + ' ' + out.title).match(/\b[A-Z][a-z]{3,}(?:\s+[A-Z][a-z]{3,}){1,2}\b/g) ?? []
@@ -178,7 +178,7 @@ export async function extractFromPdf(file: File): Promise<ExtractedContent> {
   }
   const fullText = parts.join('\n')
   const result = deriveMetadata(fullText, doc.numPages)
-  result.extractionWarnings.push('Extracted fields are machine-derived — review and correct before analysis.')
+  result.extractionWarnings.push('Extracted fields are machine-derived. Review and correct before analysis.')
   return result
 }
 
@@ -186,4 +186,179 @@ export function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
+}
+
+export interface ExtractedFigure {
+  name: string
+  blob: Blob
+}
+
+export interface ExtractedTable {
+  name: string
+  csv: string
+}
+
+async function loadPdfjs() {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/legacy/build/pdf.worker.min.mjs', import.meta.url).href
+  return pdfjs
+}
+
+/** Pull embedded raster images out of the manuscript PDF as standalone PNGs. */
+export async function extractFiguresFromPdf(file: File): Promise<ExtractedFigure[]> {
+  const pdfjs = await loadPdfjs()
+  const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
+  const figures: ExtractedFigure[] = []
+  const seen = new Set<string>()
+  const maxPages = Math.min(doc.numPages, 40)
+  for (let i = 1; i <= maxPages && figures.length < 20; i++) {
+    const page = await doc.getPage(i)
+    let opList: Awaited<ReturnType<Awaited<ReturnType<typeof doc.getPage>>['getOperatorList']>>
+    try {
+      opList = await page.getOperatorList()
+    } catch {
+      continue
+    }
+    for (let j = 0; j < opList.fnArray.length; j++) {
+      const op = opList.fnArray[j]
+      const isImage = op === pdfjs.OPS.paintImageXObject || op === pdfjs.OPS.paintInlineImageXObject
+      if (!isImage) continue
+      try {
+        const args = opList.argsArray[j] as unknown[]
+        const img =
+          op === pdfjs.OPS.paintImageXObject
+            ? (page.objs.get(args[0] as string) as { width?: number; height?: number; data?: Uint8ClampedArray } | undefined)
+            : (args[0] as { width?: number; height?: number; data?: Uint8ClampedArray } | undefined)
+        if (!img || !img.width || !img.height || !img.data) continue
+        if (img.width < 80 || img.height < 80) continue
+        const sig = `${img.width}x${img.height}x${img.data.length}`
+        if (seen.has(sig)) continue
+        seen.add(sig)
+        const canvas = document.createElement('canvas')
+        canvas.width = img.width
+        canvas.height = img.height
+        const ctx = canvas.getContext('2d')
+        if (!ctx) continue
+        ctx.putImageData(new ImageData(new Uint8ClampedArray(img.data), img.width, img.height), 0, 0)
+        const blob = await new Promise<Blob | null>((res) => canvas.toBlob(res, 'image/png'))
+        if (!blob) continue
+        figures.push({ name: `figure-${figures.length + 1}.png`, blob })
+      } catch {
+        /* skip unpaintable image objects */
+      }
+    }
+  }
+  return figures
+}
+
+/** Heuristic tabular-text extraction: runs of wide rows become CSV tables. */
+export async function extractTablesFromPdf(file: File): Promise<ExtractedTable[]> {
+  const pdfjs = await loadPdfjs()
+  const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
+  const tables: ExtractedTable[] = []
+  const maxPages = Math.min(doc.numPages, 40)
+
+  type Cell = { x: number; y: number; w: number; str: string }
+
+  function cellsOf(line: Cell[]): string[] {
+    const sorted = [...line].sort((a, b) => a.x - b.x)
+    if (sorted.length === 0) return []
+    const cells: string[] = []
+    let current = sorted[0].str
+    let prevEnd = sorted[0].x + sorted[0].w
+    for (let k = 1; k < sorted.length; k++) {
+      const it = sorted[k]
+      if (it.x - prevEnd > 8) {
+        cells.push(current.trim())
+        current = it.str
+      } else {
+        current += ' ' + it.str
+      }
+      prevEnd = it.x + it.w
+    }
+    if (current.trim()) cells.push(current.trim())
+    return cells
+  }
+
+  function pushTable(run: string[][]) {
+    const cols = Math.max(...run.map((c) => c.length))
+    const csv = run
+      .map((c) =>
+        Array.from({ length: cols }, (_, n) => `"${(c[n] ?? '').replace(/"/g, '""')}"`).join(',')
+      )
+      .join('\n')
+    tables.push({ name: `table-${tables.length + 1}.csv`, csv })
+  }
+
+  for (let i = 1; i <= maxPages && tables.length < 10; i++) {
+    const page = await doc.getPage(i)
+    const content = await page.getTextContent()
+    const items: Cell[] = []
+    for (const raw of content.items) {
+      if (!('str' in raw) || typeof raw.str !== 'string') continue
+      const str = raw.str.trim()
+      if (!str) continue
+      const tx = raw.transform
+      items.push({ x: tx[4], y: tx[5], w: (raw as { width?: number }).width ?? 0, str })
+    }
+    items.sort((a, b) => b.y - a.y || a.x - b.x)
+    const lines: Cell[][] = []
+    for (const it of items) {
+      const last = lines[lines.length - 1]
+      if (last && Math.abs(last[0].y - it.y) < 3) last.push(it)
+      else lines.push([it])
+    }
+    let run: string[][] | null = null
+    for (const line of lines) {
+      const cells = cellsOf(line)
+      if (cells.length >= 3) {
+        if (!run) run = []
+        run.push(cells)
+      } else {
+        if (run && run.length >= 2) pushTable(run)
+        run = null
+      }
+    }
+    if (run && run.length >= 2) pushTable(run)
+  }
+  return tables
+}
+
+
+export async function extractFromDocx(file: File): Promise<ExtractedContent> {
+  const mammoth = await import('mammoth')
+  const arrayBuffer = await file.arrayBuffer()
+  const result = await mammoth.extractRawText({ arrayBuffer })
+  const text = result.value || ''
+  const words = text.split(/\s+/).filter(Boolean)
+  const pageCount = Math.max(1, Math.ceil(words.length / 500))
+  return deriveMetadata(text, pageCount)
+}
+
+/** Full extracted text of a PDF (capped) for word counting and blind scans. */
+export async function extractPdfText(file: File, maxPages = 40): Promise<string> {
+  const pdfjs = await loadPdfjs()
+  const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise
+  const parts: string[] = []
+  const n = Math.min(doc.numPages, maxPages)
+  for (let i = 1; i <= n; i++) {
+    const page = await doc.getPage(i)
+    const content = await page.getTextContent()
+    for (const raw of content.items) {
+      if ('str' in raw && typeof raw.str === 'string') parts.push(raw.str)
+    }
+    parts.push('\n')
+  }
+  return parts.join(' ')
+}
+
+/** Raw text of a DOCX for word counting and blind scans. */
+export async function extractDocxText(file: File): Promise<string> {
+  const mammoth = await import('mammoth')
+  const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })
+  return result.value || ''
+}
+
+export function countWords(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length
 }

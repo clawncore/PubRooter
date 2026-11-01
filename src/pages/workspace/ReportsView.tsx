@@ -30,7 +30,7 @@ export function ReportsView({ go }: { go: (v: WorkspaceView) => void }) {
       <h1 className="ws-h1">Reports and Exports</h1>
       <p className="ws-sub">
         CSV files for spreadsheets and print-ready reports for PDF saving. Exports contain journal metadata and
-        checklist results — never your full manuscript text.
+        checklist results. Never your full manuscript text.
       </p>
 
       <div className="ws-card" style={{ padding: '0 1.25rem', marginBottom: '1.5rem' }}>
@@ -103,7 +103,7 @@ export function ReportsView({ go }: { go: (v: WorkspaceView) => void }) {
           type="button"
           className="ws-btn ws-btn-outline"
           onClick={() => {
-            downloadFile('pubrooter_workspace.json', 'application/json', JSON.stringify({ version: data.version, exportedAt: new Date().toISOString(), projects: data.projects, savedJournals: data.savedJournals, activity: data.activity }, null, 2))
+            downloadFile('pubrooter_workspace.json', 'application/json', JSON.stringify({ version: data.version, exportedAt: new Date().toISOString(), projects: data.projects, activity: data.activity }, null, 2))
             log('report', 'Exported full workspace JSON.')
           }}
         >
@@ -111,7 +111,7 @@ export function ReportsView({ go }: { go: (v: WorkspaceView) => void }) {
         </button>
         <p style={{ fontSize: 11.5, color: '#666', marginBottom: 0 }}>
           Comparison exports are available from an analysis page once two or more journals are selected. Treat exports
-          as confidential — they reference unpublished work.
+          as confidential. They reference unpublished work.
         </p>
       </div>
     </div>

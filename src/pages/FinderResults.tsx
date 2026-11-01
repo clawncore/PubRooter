@@ -1,12 +1,14 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { View } from '../types-nav'
 import type { JournalMatch } from '../types'
+import { journalSiteUrl, resolveJournalSite } from '../workspace/journal-url'
 import { JournalCover } from '../components/JournalCover'
 
 interface Props {
   matches: JournalMatch[]
   apiNotice: string
   onNewSearch: (tab?: 'abstract' | 'search') => void
+  onStartUpload?: () => void
 }
 
 const SAVED_KEY = 'pubrooter.savedJournals.v1'
@@ -122,13 +124,35 @@ function RangeFilter({
   )
 }
 
-export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
+export function FinderResults({ matches, apiNotice, onNewSearch, onStartUpload }: Props) {
   const [sort, setSort] = useState<SortKey>('best')
   const [showOA, setShowOA] = useState(true)
   const [showSub, setShowSub] = useState(true)
   const [ifRange, setIfRange] = useState<[number, number]>([0, 10])
   const [csRange, setCsRange] = useState<[number, number]>([0, 10])
   const [saved, setSaved] = useState<string[]>(() => loadSaved())
+  const [resolvedSites, setResolvedSites] = useState<Record<string, string>>({})
+
+  // Recover journal homepages by ISSN for candidates whose open metadata
+  // has no inline URL (mostly Crossref-sourced results). Cached a week.
+  useEffect(() => {
+    let cancelled = false
+    const missing = matches.filter((m) => !journalSiteUrl(m.journal) && !resolvedSites[m.journal.id])
+    if (missing.length === 0) return
+    void Promise.allSettled(missing.map((m) => resolveJournalSite(m.journal))).then((out) => {
+      if (cancelled) return
+      const next: Record<string, string> = {}
+      out.forEach((r, i) => {
+        const j = missing[i]?.journal
+        if (r.status === 'fulfilled' && r.value && j) next[j.id] = r.value
+      })
+      if (Object.keys(next).length > 0) setResolvedSites((prev) => ({ ...prev, ...next }))
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matches])
 
   const ifValues = useMemo(() => matches.map((m) => m.journal.citedness ?? 0), [matches])
   const csValues = useMemo(() => matches.map((m) => m.journal.citedness4 ?? m.journal.citedness ?? 0), [matches])
@@ -176,7 +200,7 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
     <div className="lp-container jf-results-wrap">
       <div className="jf-results-head">
         <h2>
-          Showing <strong>{visible.length}</strong> journals matching your paper
+          Showing <strong>{visible.length}</strong> {visible.length === 1 ? 'journal' : 'journals'} matching your paper
         </h2>
         <div className="jf-results-tools">
           <button type="button" className="jf-newsearch" onClick={() => onNewSearch()}>
@@ -202,6 +226,22 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
           </label>
         </div>
       </div>
+
+      {onStartUpload && (
+        <div className="jf-publish-cta">
+          <div className="jf-publish-cta-copy">
+            <h3>Ready to submit in just a few minutes</h3>
+            <p>
+              Your shortlist is the start. Upload your manuscript and PubRooter runs the full workflow for you:
+              analysis, readiness checks against each journal&apos;s requirements, and a verified submission package
+              you can export as a ZIP.
+            </p>
+          </div>
+          <button type="button" className="jf-publish-cta-btn" onClick={onStartUpload}>
+            Upload your manuscript
+          </button>
+        </div>
+      )}
 
       {apiNotice && (
         <p className="jf-notice" role="status">
@@ -244,7 +284,7 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
 
           <RangeFilter
             label="Impact factor"
-            info="OpenAlex 2-year mean citations per document — the same two-year window as Clarivate's Impact Factor, shown from open data."
+            info="OpenAlex 2-year mean citations per document. The same two-year window as Clarivate's Impact Factor, shown from open data."
             values={ifValues}
             range={ifRange}
             onRange={setIfRange}
@@ -253,7 +293,7 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
 
           <RangeFilter
             label="CiteScore"
-            info="OpenAlex 4-year mean citations per document — the same four-year window as Scopus CiteScore, shown from open data."
+            info="OpenAlex 4-year mean citations per document. The same four-year window as Scopus CiteScore, shown from open data."
             values={csValues}
             range={csRange}
             onRange={setCsRange}
@@ -262,7 +302,7 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
 
           <RangeFilter
             label="Time to 1st decision"
-            info="Time from manuscript submission to the initial decision, in days. Not available for open multi-publisher data — check each journal's guide for authors."
+            info="Time from manuscript submission to the initial decision, in days. Not available for open multi-publisher data. Check each journal's guide for authors."
             values={[]}
             range={[0, 365]}
             max={365}
@@ -271,7 +311,7 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
 
           <RangeFilter
             label="Time to acceptance"
-            info="Time from 1st decision to acceptance, in days. Not available for open multi-publisher data — verify with the journal directly."
+            info="Time from 1st decision to acceptance, in days. Not available for open multi-publisher data. Verify with the journal directly."
             values={[]}
             range={[0, 365]}
             max={365}
@@ -301,7 +341,7 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
           {visible.map((m, idx) => {
             const j = m.journal
             const isSaved = saved.includes(j.id)
-            const link = j.homepageUrl || (j.sourceUrl?.startsWith('http') ? j.sourceUrl : undefined)
+            const link = journalSiteUrl(j) ?? resolvedSites[j.id]
             const oa = !!j.isOpenAccess
             return (
               <article key={j.id} className="jf-journal">
@@ -322,18 +362,26 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
                       </button>
                     </div>
                     <div className="jf-journal-ctas">
-                      <a className="jf-visit" href={link ?? j.sourceUrl ?? '#'} target="_blank" rel="noreferrer">
-                        Visit journal page
-                      </a>
-                      <a
-                        className="jf-submit"
-                        href={link ?? j.sourceUrl ?? '#'}
-                        target="_blank"
-                        rel="noreferrer"
-                        title="PubRooter does not handle submission — you continue on the journal's own site"
-                      >
-                        Submit paper
-                      </a>
+                      {link ? (
+                        <>
+                          <a className="jf-visit" href={link} target="_blank" rel="noreferrer">
+                            Visit journal page
+                          </a>
+                          <a
+                            className="jf-submit"
+                            href={link}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="PubRooter does not handle submission. You continue on the journal's own site"
+                          >
+                            Submit paper
+                          </a>
+                        </>
+                      ) : (
+                        <span className="jf-visit" title="Journal website could not be resolved from open metadata">
+                          Site unavailable
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -341,30 +389,30 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
                     <span className="jf-metric">
                       <span className="jf-metric-label">
                         Impact Factor
-                        <InfoDot text="2-year mean citedness (OpenAlex) — same window as Clarivate's Impact Factor." />
+                        <InfoDot text="2-year mean citedness (OpenAlex). Same window as Clarivate's Impact Factor." />
                       </span>
-                      <span className="jf-metric-value">{typeof j.citedness === 'number' ? j.citedness.toFixed(1) : '—'}</span>
+                      <span className="jf-metric-value">{typeof j.citedness === 'number' ? j.citedness.toFixed(1) : 'N/A'}</span>
                     </span>
                     <span className="jf-metric">
                       <span className="jf-metric-label">
                         CiteScore
-                        <InfoDot text="4-year mean citedness (OpenAlex) — same window as Scopus CiteScore." />
+                        <InfoDot text="4-year mean citedness (OpenAlex). Same window as Scopus CiteScore." />
                       </span>
-                      <span className="jf-metric-value">{typeof j.citedness4 === 'number' ? j.citedness4.toFixed(1) : '—'}</span>
+                      <span className="jf-metric-value">{typeof j.citedness4 === 'number' ? j.citedness4.toFixed(1) : 'N/A'}</span>
                     </span>
                     <span className="jf-metric">
                       <span className="jf-metric-label">
                         Submission to first decision
                         <InfoDot text="Not available for open multi-publisher data." />
                       </span>
-                      <span className="jf-metric-value">—</span>
+                      <span className="jf-metric-value">N/A</span>
                     </span>
                     <span className="jf-metric">
                       <span className="jf-metric-label">
                         Acceptance to publication
                         <InfoDot text="Not available for open multi-publisher data." />
                       </span>
-                      <span className="jf-metric-value">—</span>
+                      <span className="jf-metric-value">N/A</span>
                     </span>
                   </div>
 
@@ -389,7 +437,7 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
                       <>
                         <span className="jf-oa-badge jf-oa-badge-sub">Subscription</span>
                         <p className="jf-oa-note-line">
-                          This journal is not listed as open access — subscription or hybrid terms apply. Check
+                          This journal is not listed as open access. Subscription or hybrid terms apply. Check
                           publishing options on the journal's site.
                         </p>
                         {link && (
@@ -410,7 +458,7 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
                     </summary>
                     <div className="jf-more-body">
                       <p className="jf-more-score">
-                        Match score <strong>{m.score}</strong> / 100 — rank {idx + 1} of {visible.length} shown
+                        Match score <strong>{m.score}</strong> / 100. Rank {idx + 1} of {visible.length} shown
                       </p>
                       <ul>
                         {m.evidence.map((e, i) => (
@@ -424,8 +472,8 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
                           </li>
                         ))}
                         <li>
-                          <strong>Publisher:</strong> {j.publisher ?? 'Unknown'} · <strong>ISSN:</strong> {j.issn ?? '—'} ·{' '}
-                          <strong>Documents:</strong> {j.worksCount?.toLocaleString() ?? '—'} · <strong>Source:</strong> {j.source}
+                          <strong>Publisher:</strong> {j.publisher ?? 'Unknown'} · <strong>ISSN:</strong> {j.issn ?? 'N/A'} ·{' '}
+                          <strong>Documents:</strong> {j.worksCount?.toLocaleString() ?? 'N/A'} · <strong>Source:</strong> {j.source}
                         </li>
                         {j.subjects.length > 0 && (
                           <li>
@@ -443,7 +491,7 @@ export function FinderResults({ matches, apiNotice, onNewSearch }: Props) {
       </div>
 
       <p className="sources-footnote">
-        Impact Factor and CiteScore slots show OpenAlex mean-citedness figures with matching 2-year and 4-year windows —
+        Impact Factor and CiteScore slots show OpenAlex mean-citedness figures with matching 2-year and 4-year windows.
         Clarivate and Scopus values require licences we don't hold, so we never fabricate them. Time to decision metrics
         are not available in open data. PubRooter does not handle submission: "Submit paper" routes you to the
         journal's own site.

@@ -1,12 +1,12 @@
-import { useWorkspace } from '../../workspace/WorkspaceContext'
 import { Finder } from '../Finder'
 import type { View } from '../../types-nav'
+import type { WorkspaceView } from './WorkspaceApp'
 
-export function FindJournalsView() {
-  const navigate = (_v: View) => {
-    /* The public Finder is hosted inside the workspace shell here; its
-       breadcrumbs (Home / Journal Finder) resolve against the public
-       routes, so a cross-app navigation inside the shell is a no-op. */
+export function FindJournalsView({ go }: { go: (v: WorkspaceView) => void }) {
+  const navigate = (v: View) => {
+    // Inside the workspace shell the public "Home" breadcrumb resolves to the
+    // workspace overview; "Journal Finder" is already the current view.
+    if (v === 'home') go({ name: 'overview' })
   }
-  return <Finder onNavigate={navigate} />
+  return <Finder onNavigate={navigate} onStartUpload={() => go({ name: 'new' })} />
 }

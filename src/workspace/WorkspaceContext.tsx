@@ -4,6 +4,15 @@ import { logActivity } from './activity'
 import { emptyWorkspace, type ActivityEvent, type WorkspaceData, type WorkspaceProfile } from './types'
 import { uid } from '../lib/storage'
 import { supabase, isCloud, COLABWIZE_URL } from '../lib/supabase'
+import {
+  handleAuthError,
+  tryReauth,
+  setKnownAuthEmail,
+  markSignedIn,
+  markSignedOut,
+  wasSignedIn
+} from '../lib/auth'
+import { authTrace } from '../lib/auth-trace'
 import { deleteFile as deleteStoredFile } from './storage'
 import {
   loadWorkspaceCloud,
@@ -31,7 +40,7 @@ interface WorkspaceContextValue {
   log: (kind: ActivityEvent['kind'], detail: string, projectId?: string) => void
   // Cloud (Colabwize shared account) methods
   signIn: (email: string, password: string) => Promise<void>
-  signUp: (profile: WorkspaceProfile, password: string) => Promise<void>
+  signUp: (profile: WorkspaceProfile, password: string) => Promise<{ needsConfirmation: boolean; email: string }>
   signInWithProvider: (provider: 'google' | 'azure') => Promise<void>
   signOut: () => Promise<void>
   importFromColabwize: () => Promise<number>
@@ -40,7 +49,7 @@ interface WorkspaceContextValue {
 const Ctx = createContext<WorkspaceContextValue | null>(null)
 
 // Analysis runs live only in memory: if a project is still marked busy when the
-// workspace loads, the run was interrupted (closed tab / reload) — surface it as
+// workspace loads, the run was interrupted (closed tab / reload). Surface it as
 // retryable instead of showing a progress banner forever. updatedAt is left
 // untouched so this recovery stays derived on every load.
 function recoverInterrupted(ws: WorkspaceData): WorkspaceData {
@@ -50,7 +59,7 @@ function recoverInterrupted(ws: WorkspaceData): WorkspaceData {
     ...ws,
     projects: ws.projects.map((p) =>
       busy(p.status)
-        ? { ...p, status: 'failed' as const, error: p.error ?? 'This run was interrupted when the workspace closed — retry it to finish.' }
+        ? { ...p, status: 'failed' as const, error: p.error ?? 'This run was interrupted when the workspace closed. Retry it to finish.' }
         : p
     )
   }
@@ -70,6 +79,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   const passphraseRef = useRef<string | null>(null)
   const saveTimer = useRef<number | undefined>(undefined)
+  // Distinguishes a deliberate sign-out from an unexpected session expiry.
+  // only the latter should trigger automatic reauth.
+  const manualSignOutRef = useRef(false)
 
   // Cloud sync bookkeeping
   const syncedActivityIds = useRef<Set<string>>(new Set())
@@ -99,16 +111,33 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       })
       if (access && refresh) {
         console.debug('[PubRooter] Calling setSession with tokens')
-        const { error: sessErr } = await sb.auth.setSession({ access_token: access, refresh_token: refresh })
-        if (sessErr) {
-          console.error('[PubRooter] setSession error:', sessErr.message)
-          setError(sessErr.message)
-        } else {
-          console.debug('[PubRooter] setSession succeeded')
-        }
+        // Strip the URL before any async work so tokens never linger in the
+        // address bar or history, even if setSession fails or hangs. The
+        // token values are already captured in local vars above.
         window.history.replaceState({}, '', window.location.pathname)
+        try {
+          const { error: sessErr } = await sb.auth.setSession({ access_token: access, refresh_token: refresh })
+          if (sessErr) {
+            console.error('[PubRooter] setSession error:', sessErr.message)
+            const msg = await handleAuthError(sessErr)
+            if (msg !== null) setError(msg)
+          } else {
+            console.debug('[PubRooter] setSession succeeded')
+            markSignedIn(null)
+          }
+        } catch (e) {
+          const msg = await handleAuthError(e)
+          console.error('[PubRooter] setSession threw:', msg ?? 'session recovered')
+          if (msg !== null) setError(msg)
+        }
       } else if (hasColabwizeParam) {
         console.warn('[PubRooter] colabwize_auth=1 present but NO tokens in URL - Colabwize did not hand back session. Check Colabwize externalAuthHandback() is deployed and redirect URL is allowlisted.')
+      }
+      // The handoff flags are only meaningful during boot. Leaving them in the
+      // address bar makes every later reload re-run the handoff gate (and force
+      // the workspace view) even though the session now lives in storage.
+      if (hasColabwizeParam || search.get('oauth') || search.get('email_confirmed')) {
+        window.history.replaceState({}, '', window.location.pathname)
       }
     }
     void apply()
@@ -123,7 +152,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
     let cancelled = false
 
-    async function loadForUser() {
+    async function loadForUser(attempt = 0) {
       try {
         const ws = recoverInterrupted(await loadWorkspaceCloud())
         if (cancelled) return
@@ -132,6 +161,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         syncedProjectUpdates.current = new Map(ws.projects.map((p) => [p.id, p.updatedAt]))
         syncedSavedKey.current = savedKey(ws)
         syncedProfileKey.current = profileKey(ws)
+        setError(null) // fresh load clears any expired-session notice
         setStatus('unlocked')
         // Auto-import Colabwize drafts (best-effort)
         try {
@@ -158,28 +188,90 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           /* bridge table may not exist yet */
         }
       } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Could not load workspace')
-          setStatus('locked')
+        if (cancelled) return
+        // Session-related failures attempt recovery first; only an
+        // unrecoverable session (or a non-session error) lands here.
+        const msg = await handleAuthError(e)
+        if (cancelled) return
+        if (msg === null && attempt === 0) {
+          authTrace('load-retry', 'session recovered. Reloading workspace')
+          void loadForUser(attempt + 1)
+          return
         }
+        setError(msg ?? 'Could not load workspace')
+        setStatus('locked')
       }
     }
 
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (cancelled) return
-      if (session) void loadForUser()
-      else setStatus('locked')
+      if (session) {
+        setKnownAuthEmail(session.user.email ?? null)
+        markSignedIn(session.user.email ?? null)
+        void loadForUser()
+      } else if (wasSignedIn()) {
+        // This browser had a live session earlier but the refresh token is
+        // gone (expired/revoked). Recover before locking the UI.
+        authTrace('boot-expired', 'no session on load though this browser was signed in')
+        void (async () => {
+          const ok = await tryReauth()
+          if (cancelled) return
+          if (ok) {
+            void loadForUser()
+          } else {
+            authTrace('recovery-failed', 'boot path. Locking with actionable message')
+            setError('Your session expired. Sign in again to continue.')
+            setStatus('locked')
+          }
+        })()
+      } else {
+        setStatus('locked')
+      }
     })
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
       if (cancelled) return
-      if (!session) {
-        passphraseRef.current = null
-        setData(null)
-        setStatus('locked')
-      } else if (statusRef.current !== 'unlocked') {
-        void loadForUser()
+      if (session) {
+        setKnownAuthEmail(session.user.email ?? null)
+        markSignedIn(session.user.email ?? null)
+        if (statusRef.current !== 'unlocked') {
+          void loadForUser()
+        } else if (event === 'SIGNED_IN') {
+          // A successful (re)sign-in clears any expired-session notice.
+          setError(null)
+        }
+        return
       }
+      // Signed out. Deliberate or not.
+      const manual = manualSignOutRef.current
+      manualSignOutRef.current = false
+      passphraseRef.current = null
+      setData(null)
+      if (manual) {
+        authTrace('signed-out', 'manual sign-out')
+        setError(null)
+        setStatus('locked')
+        return
+      }
+      if (statusRef.current !== 'unlocked') {
+        setStatus('locked')
+        return
+      }
+      // The session expired while the user was working: restore it before
+      // (and instead of) dumping them on the sign-in screen.
+      authTrace('signed-out', 'session expired while unlocked. Attempting recovery')
+      void (async () => {
+        const ok = await tryReauth()
+        if (cancelled) return
+        if (ok) {
+          authTrace('expired-recovered', 'session restored')
+          void loadForUser()
+        } else {
+          authTrace('recovery-failed', 'expiry while unlocked. Locking with actionable message')
+          setError('Your session expired. Sign in again to continue.')
+          setStatus('locked')
+        }
+      })()
     })
 
     return () => {
@@ -211,7 +303,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   // Diffs against the last-synced markers (never against a previous snapshot):
   // a later debounced save cancels earlier timers, so snapshot-diffing would
   // silently drop changes that landed between two cancelled persists.
-  const persistCloud = useCallback(async (next: WorkspaceData) => {
+  const persistCloud = useCallback(async (next: WorkspaceData, isRetry = false): Promise<void> => {
     try {
       const tasks: Promise<void>[] = []
 
@@ -240,7 +332,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       syncedSavedKey.current = savedKey(next)
       syncedProfileKey.current = profileKey(next)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save workspace')
+      // Session-related save failures attempt recovery; a recovered session
+      // gets one automatic retry of the same save.
+      const msg = await handleAuthError(e)
+      if (msg === null) {
+        if (!isRetry) {
+          authTrace('persist-retry', 'session recovered. Retrying save once')
+          return persistCloud(next, true)
+        }
+        setError('Could not save workspace')
+      } else {
+        setError(msg)
+      }
     }
   }, [])
 
@@ -256,7 +359,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         window.clearTimeout(saveTimer.current)
         saveTimer.current = window.setTimeout(() => {
           const run = () => (isCloud ? persistCloud(next) : persistLocal(next))
-          persistChainRef.current = persistChainRef.current.then(run)
+          // A rejected save must never poison the chain: the next update
+          // re-diffs against the last successful sync and retries it.
+          persistChainRef.current = persistChainRef.current.catch(() => undefined).then(run)
         }, 250)
         return next
       })
@@ -329,6 +434,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const lock = useCallback(() => {
     if (isCloud) {
+      manualSignOutRef.current = true
+      markSignedOut()
       void supabase?.auth.signOut()
       return
     }
@@ -368,18 +475,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     try {
       const { error: err } = await supabase.auth.signInWithPassword({ email, password })
       if (err) throw new Error(err.message === 'Invalid login credentials' ? 'Email or password is incorrect.' : err.message)
+      markSignedIn(email)
     } finally {
       setBusy(false)
     }
   }, [])
 
-  const signUp = useCallback(async (profile: WorkspaceProfile, password: string) => {
+  const signUp = useCallback(async (profile: WorkspaceProfile, password: string): Promise<{ needsConfirmation: boolean; email: string }> => {
     if (!supabase) throw new Error('Cloud backend not configured.')
     setBusy(true)
     setError(null)
     try {
       const redirectTo = `${window.location.origin}/?email_confirmed=1`
-      const { error: err } = await supabase.auth.signUp({
+      const { data, error: err } = await supabase.auth.signUp({
         email: profile.email,
         password,
         options: {
@@ -387,7 +495,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           emailRedirectTo: redirectTo
         }
       })
-      if (err) throw new Error(err.message)
+      if (err) {
+        const msg = /already registered|already exists/i.test(err.message)
+          ? 'An account with this email already exists.'
+          : err.message
+        throw new Error(msg)
+      }
+      // With email confirmation enabled Supabase returns a user but no
+      // session. Tell the caller so the UI can ask the user to check
+      // their inbox instead of silently appearing to do nothing.
+      return { needsConfirmation: !data.session, email: profile.email }
     } finally {
       setBusy(false)
     }
@@ -396,7 +513,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const signInWithProvider = useCallback(async (provider: 'google' | 'azure') => {
     if (!supabase) throw new Error('Cloud backend not configured.')
     setError(null)
-    // Same Supabase project as Colabwize — providers must be enabled there.
+    // Same Supabase project as Colabwize. Providers must be enabled there.
     // Browser navigates away to the provider; busy stays set until redirect.
     setBusy(true)
     const { error: err } = await supabase.auth.signInWithOAuth({
@@ -413,7 +530,19 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
-    await supabase?.auth.signOut()
+    // Deliberate sign-out: the auth listener must not treat the resulting
+    // SIGNED_OUT event as an expiry and try to reauth.
+    manualSignOutRef.current = true
+    try {
+      await supabase?.auth.signOut()
+      markSignedOut()
+    } finally {
+      // If no SIGNED_OUT event fired (already signed out), don't leave the
+      // flag stuck. It would suppress recovery on the next real expiry.
+      window.setTimeout(() => {
+        manualSignOutRef.current = false
+      }, 0)
+    }
   }, [])
 
   const importFromColabwize = useCallback(async () => {

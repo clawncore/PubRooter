@@ -27,9 +27,9 @@ export function recommendationsCsv(project: ManuscriptProject): string {
   const tierOf = (id: string): string => {
     const t = project.analysis?.tiers
     if (!t) return ''
-    if (t.tier1.includes(id)) return 'Tier 1 — Strongest fit'
-    if (t.tier2.includes(id)) return 'Tier 2 — Alternative fit'
-    if (t.tier3.includes(id)) return 'Tier 3 — Broader option'
+    if (t.tier1.includes(id)) return 'Tier 1: Strongest fit'
+    if (t.tier2.includes(id)) return 'Tier 2: Alternative fit'
+    if (t.tier3.includes(id)) return 'Tier 3: Broader option'
     return 'Not tiered'
   }
   const headers = ['Journal', 'Publisher', 'ISSN', 'Fit tier', 'Relevance score (0-100)', 'Open access', 'APC (USD)', 'Why it matches', 'Known limitations', 'Source', 'Source URL', 'Last verified']
@@ -82,12 +82,12 @@ export function printReport(project: ManuscriptProject, audit?: ReadinessAudit):
     if (t?.tier1.includes(id)) return 'Tier 1'
     if (t?.tier2.includes(id)) return 'Tier 2'
     if (t?.tier3.includes(id)) return 'Tier 3'
-    return '—'
+    return 'N/A'
   }
   const summary = audit ? auditSummary(audit) : null
   const w = window.open('', '_blank', 'width=900,height=1100')
   if (!w) return
-  w.document.write(`<!doctype html><html><head><title>PubRooter report — ${escapeHtml(project.name)}</title>
+  w.document.write(`<!doctype html><html><head><title>PubRooter report: ${escapeHtml(project.name)}</title>
   <style>
     body{font-family:Georgia,serif;color:#0c0f12;margin:2.5rem;line-height:1.5}
     h1{font-size:1.6rem;border-bottom:2px solid #0056d6;padding-bottom:.5rem}
@@ -99,11 +99,11 @@ export function printReport(project: ManuscriptProject, audit?: ReadinessAudit):
     .badge{display:inline-block;padding:.1rem .45rem;border:1px solid #0056d6;color:#0056d6;border-radius:2px;font-size:.7rem;margin-right:.3rem}
     .foot{margin-top:2.5rem;font-size:.75rem;color:#666;border-top:1px solid #ddd;padding-top:.8rem}
   </style></head><body>
-  <h1>PubRooter report — ${escapeHtml(project.name)}</h1>
+  <h1>PubRooter report - ${escapeHtml(project.name)}</h1>
   <p class="meta">Generated ${new Date().toISOString()} · Ranking engine ${project.analysis?.engineVersion ?? 'n/a'} · This report supports author review and does not guarantee editorial compliance or acceptance.</p>
   <h2>Manuscript</h2>
   <p><strong>Title:</strong> ${escapeHtml(ed?.title ?? '')}<br/>
-  <strong>Keywords:</strong> ${escapeHtml((ed?.keywords ?? []).join(', ') || '—')}<br/>
+  <strong>Keywords:</strong> ${escapeHtml((ed?.keywords ?? []).join(', ') || 'N/A')}<br/>
   <strong>Words extracted:</strong> ${ed?.wordCount ?? 0} · <strong>Pages:</strong> ${ed?.pageCount ?? 0}</p>
   <h2>Journal recommendations (${matches.length})</h2>
   <table><tr><th>Journal</th><th>Tier</th><th>Score</th><th>Why it matches</th><th>Limitations</th></tr>
@@ -117,7 +117,7 @@ export function printReport(project: ManuscriptProject, audit?: ReadinessAudit):
   </table>
   ${
     audit && summary
-      ? `<h2>Readiness — ${escapeHtml(audit.journalTitle)}</h2>
+      ? `<h2>Readiness: ${escapeHtml(audit.journalTitle)}</h2>
   <p class="meta">Engine ${audit.engineVersion} · Run ${audit.runAt} · Pass ${summary.pass} · Needs attention ${summary.attention} · Warning ${summary.warning} · Unknown ${summary.unknown}</p>
   <table><tr><th>Check</th><th>Status</th><th>Explanation</th></tr>
   ${audit.checks.map((c) => `<tr><td>${escapeHtml(c.label)}</td><td>${c.status}</td><td>${escapeHtml(c.explanation)}</td></tr>`).join('')}
